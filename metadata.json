@@ -1,0 +1,6 @@
+{
+  "name": "NotebookLM to BookStack Sync",
+  "description": "Seamlessly transfer your NotebookLM articles and study guides to your BookStack instance via API.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
