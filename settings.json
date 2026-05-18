@@ -1,0 +1,11 @@
+{
+  "bookstack_sources": [],
+  "agent_work_mode": "auto",
+  "agent_data_structure": "1. Краткий обзор (Summary)\n2. Контекст (Context)\n3. Детальное описание (Detailed Analysis)\n4. Выводы (Conclusion)",
+  "agent_system_instruction": "Вы — эксперт по техническому письму. Синтезируйте предоставленные источники в понятную и профессиональную статью для базы знаний Wiki.",
+  "bookstack_creds": {
+    "baseUrl": "https://bookstack.cloudpub.ru/",
+    "tokenId": "",
+    "tokenSecret": ""
+  }
+}

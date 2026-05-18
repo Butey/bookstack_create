@@ -36,19 +36,3 @@ export interface BookStackPage {
   markdown: string;
   tags?: { name: string; value: string } [];
 }
-
-export interface ProcessedArticle {
-  title: string;
-  content: string;
-  thinking: string;
-  markdown?: string;
-  targetPublishMode: 'create' | 'update';
-  targetPublishPageId: number | null;
-  targetPublishBookId: number | null;
-  targetPublishChapterId?: number | null;
-  tags: string[];
-  targetBookId?: number | null;
-  newBookName?: string;
-  targetChapterId?: number | null;
-  newChapterName?: string;
-}
