@@ -1,3 +1,9 @@
+export interface OmnideskCredentials {
+  domain: string;
+  email: string;
+  apiKey: string;
+}
+
 export interface BookStackCredentials {
   baseUrl: string;
   tokenId: string;
@@ -51,4 +57,5 @@ export interface ProcessedArticle {
   newBookName?: string;
   targetChapterId?: number | null;
   newChapterName?: string;
+  duplicateLinks?: string[];
 }

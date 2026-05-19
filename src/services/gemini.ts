@@ -3,10 +3,10 @@
 
 import { BookStackCredentials } from '../types';
 export const GEMINI_MODELS = [
-  { id: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro (Preview)', description: 'Самая умная, сложные задачи' },
   { id: 'gemini-3-flash-preview',  label: 'Gemini 3 Flash (Preview)', description: 'Быстрая, высокое качество' },
   { id: 'gemini-3.1-flash-lite',   label: 'Gemini 3.1 Flash-Lite (Stable)', description: 'Быстрая и экономичная' },
   { id: 'gemini-2.5-flash',        label: 'Gemini 2.5 Flash (Stable)', description: 'Цена/качество, рассуждения' },
+  { id: 'gemini-2.5-pro',          label: 'Gemini 2.5 Pro (Stable)', description: 'Мощная модель для сложных задач' },
 ] as const;
 
 export type GeminiModelId = typeof GEMINI_MODELS[number]['id'];
@@ -15,6 +15,8 @@ export const DEFAULT_MODEL: GeminiModelId = 'gemini-3-flash-preview';
 
 export interface CallGeminiConfig {
   responseMimeType?: string;
+  responseSchema?: any;
+  systemInstruction?: string;
   signal?: AbortSignal;
   checkPause?: () => Promise<void>;
 }
@@ -24,7 +26,15 @@ export async function callGemini(model: GeminiModelId, contents: any[], config?:
   const res = await fetch('/api/gemini/generate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model, contents, config: { responseMimeType: config?.responseMimeType } }),
+    body: JSON.stringify({ 
+      model, 
+      contents, 
+      config: { 
+        responseMimeType: config?.responseMimeType,
+        responseSchema: config?.responseSchema,
+        systemInstruction: config?.systemInstruction
+      } 
+    }),
     signal: config?.signal
   });
   const data = await res.json();
@@ -35,6 +45,7 @@ export async function callGemini(model: GeminiModelId, contents: any[], config?:
 }
 
 export function extractJson(text: string) {
+  if (!text) return {};
   try {
     return JSON.parse(text);
   } catch (e) {
@@ -44,9 +55,22 @@ export function extractJson(text: string) {
     }
     const firstBrace = text.indexOf('{');
     const lastBrace = text.lastIndexOf('}');
-    if (firstBrace !== -1 && lastBrace !== -1) {
+    
+    const firstBracket = text.indexOf('[');
+    const lastBracket = text.lastIndexOf(']');
+    
+    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+      if (firstBracket !== -1 && firstBracket < firstBrace && lastBracket > lastBrace) {
+        try { return JSON.parse(text.substring(firstBracket, lastBracket + 1)); } catch (_) {}
+      }
       try { return JSON.parse(text.substring(firstBrace, lastBrace + 1)); } catch (_) {}
     }
+    
+    if (firstBracket !== -1 && lastBracket !== -1 && lastBracket > firstBracket) {
+      try { return JSON.parse(text.substring(firstBracket, lastBracket + 1)); } catch (_) {}
+    }
+    
+    console.error("Failed to parse JSON string:", text.substring(0, 500));
     throw new Error("Could not parse JSON from model response");
   }
 }
@@ -60,35 +84,51 @@ export async function generateArticleFromSources(
   previousChat?: { role: 'user' | 'model', content: string }[],
   model: GeminiModelId = DEFAULT_MODEL,
   existingContent?: string,
-  options?: { signal?: AbortSignal, checkPause?: () => Promise<void>, onProgress?: (msg: string) => void }
+  options?: { signal?: AbortSignal, checkPause?: () => Promise<void>, onProgress?: (msg: string) => void, systemInstruction?: string, dataStructure?: string },
+  attachments?: { mimeType: string; data: string }[]
 ) {
   const contextStr = availableContext
     ? `\nСПИСОК ДОСТУПНЫХ МЕСТ (КНИГИ И ГЛАВЫ):
        КНИГИ: ${JSON.stringify(availableContext.books.map(b => ({ id: b.id, name: b.name })))}
        ГЛАВЫ: ${JSON.stringify(availableContext.chapters.map(c => ({ id: c.id, name: c.name, book_id: c.book_id })))}
        
-       ИНСТРУКЦИЯ ПО ВЫБОРУ ЦЕЛИ: 
-       1. Проанализируй ИСТОЧНИКИ и ЦЕЛЬ ЗАДАЧИ.
-       2. Найди в СПИСКЕ КНИГ ту, которая наиболее точно соответствует теме.
-       3. Если подходящей книги НЕТ в списке, предложи создать её, указав ID null и её название в newBookName.
-       4. Обязательно верни ID книги в поле targetBookId.
-       5. Аналогично для глав.\n`
+       ИНСТРУКЦИЯ ПО ВЫБОРУ МЕСТА (ОЧЕНЬ ВАЖНО): 
+       1. ВНИМАТЕЛЬНО изучи СПИСОК КНИГ И ГЛАВ. Твоя главная цель — найти уже существующее релевантное место, а не плодить новые сущности!
+       2. Ищи по синонимам, пересечениям тем или более широким категориям. Если новая статья логически вписывается в существующую книгу или главу (даже если название не совпадает на 100%), обязательно используй ЕЁ ID.
+       3. Предлагай создание новой книги/главы (указав ID null и название в newBookName/newChapterName) ТОЛЬКО в самом крайнем случае, если тема совершенно новая и не имеет ничего общего с текущей структурой базы знаний.
+       4. Обязательно верни ID книги в targetBookId и ID главы в targetChapterId (если применимо).\n`
     : '';
 
   const historyPrompt = previousChat && previousChat.length > 0
     ? `\nПРЕДЫДУЩИЙ ДИАЛОГ И ПРАВКИ:\n${previousChat.map(m => `${m.role === 'user' ? 'ПОЛЬЗОВАТЕЛЬ' : 'АГЕНТ'}: ${m.content}`).join('\n')}\n`
     : '';
 
-  const existingContentPrompt = (targetMode === 'update' && existingContent)
-    ? `\nСУЩЕСТВУЮЩЕЕ СОДЕРЖИМОЕ СТАТЬИ:\n${existingContent}\n\nИНСТРУКЦИЯ: Статья обновляется. Учитывай существующий контент при планировании структуры!\n`
+  const existingContentPrompt = existingContent
+    ? (targetMode === 'update' 
+        ? `\nСУЩЕСТВУЮЩЕЕ СОДЕРЖИМОЕ СТАТЬИ:\n${existingContent}\n\nИНСТРУКЦИЯ: Статья обновляется. Учитывай существующий контент при планировании структуры!\n`
+        : `\nИНФОРМАЦИЯ О ДУБЛИКАТАХ В БАЗЕ:\n${existingContent}\n\nИНСТРУКЦИЯ: Вы создаете новую статью, но в базе уже есть похожие. Пожалуйста, учтите их существование и при необходимости сошлитесь на них или укажите их урлы в поле duplicateLinks.\n`
+      )
     : '';
+
+  const getParts = (promptText: string) => {
+     const parts: any[] = [{ text: promptText }];
+     if (attachments && attachments.length > 0) {
+        attachments.forEach(a => {
+           parts.push({ inlineData: { mimeType: a.mimeType, data: a.data } });
+        });
+     }
+     return parts;
+  };
+
+  const sysInstruction = options?.systemInstruction ? options.systemInstruction : "Вы — профессиональный технический писатель и редактор.";
 
   // --- STAGE 1: PLAN ---
   if (options?.onProgress) options.onProgress('Этап 1: Планирование структуры статьи...');
   
   const planPrompt = `
-    Вы — Главный Редактор. Ваша задача — спланировать структуру статьи (или обновления) на основе предоставленных материалов.
+    Ваша задача — спланировать структуру статьи (или обновления) на основе предоставленных материалов.
 
+    ${options?.dataStructure ? `ТРЕБУЕМАЯ СТРУКТУРА ДАННЫХ:\n${options.dataStructure}\nОбязательно учитывайте эти правила при планировании.\n` : ''}
     ${contextStr}
     ${historyPrompt}
     ${existingContentPrompt}
@@ -98,22 +138,30 @@ export async function generateArticleFromSources(
 
     ЦЕЛЬ ЗАДАЧИ:
     ${goal}
-
-    ВЕРНИТЕ СТРОГО JSON В УКАЗАННОМ ФОРМАТЕ:
-    {
-      "thinking": "анализ материалов и логика выбора места и структуры",
-      "title": "идеальный заголовок статьи",
-      "outline": "подробный пошаговый план статьи (какие разделы, что в них)",
-      "targetBookId": 123,
-      "targetChapterId": 456,
-      "newBookName": "Название, если ID null",
-      "newChapterName": "Название, если ID null"
-    }
   `;
 
   let plan;
   try {
-    const planText = await callGemini(model, [{ role: 'user', parts: [{ text: planPrompt }] }], { responseMimeType: 'application/json', signal: options?.signal, checkPause: options?.checkPause });
+    const planText = await callGemini(model, [{ role: 'user', parts: getParts(planPrompt) }], {
+      responseMimeType: 'application/json',
+      responseSchema: {
+        type: "object",
+        properties: {
+          thinking: { type: "string", description: "логика выбора места. Если вы заметили похожие статьи, предложите их объединение и объясните почему. Ваша цель - избегать создания дубликатов" },
+          title: { type: "string", description: "идеальный заголовок статьи" },
+          outline: { type: "string", description: "подробный пошаговый план статьи (какие разделы)" },
+          targetBookId: { type: "number", nullable: true },
+          targetChapterId: { type: "number", nullable: true },
+          newBookName: { type: "string", nullable: true },
+          newChapterName: { type: "string", nullable: true },
+          duplicateLinks: { type: "array", items: { type: "string" } }
+        },
+        required: ["thinking", "title", "outline"]
+      },
+      systemInstruction: sysInstruction,
+      signal: options?.signal, 
+      checkPause: options?.checkPause 
+    });
     plan = extractJson(planText);
   } catch (error: any) { throw new Error(`Ошибка на этапе планирования: ${error.message || String(error)}`); }
 
@@ -121,31 +169,39 @@ export async function generateArticleFromSources(
   if (options?.onProgress) options.onProgress(`Этап 2: Написание черновика "${plan.title}"...`);
   
   const draftPrompt = `
-    Вы — Технический Писатель. Ваша задача — написать подробный и качественный контент для Wiki-статьи по подготовленному плану.
+    Ваша задача — написать подробный и качественный контент для Wiki-статьи по подготовленному плану.
 
+    ${options?.dataStructure ? `ОБЯЗАТЕЛЬНАЯ СТРУКТУРА ДАННЫХ:\n${options.dataStructure}\nСтрого следуйте указанному формату!\n` : ''}
     ${historyPrompt}
     ${(targetMode === 'update' && existingContent) ? `\nСУЩЕСТВУЮЩАЯ СТАТЬЯ ДЛЯ ОБНОВЛЕНИЯ:\n${existingContent}\nВплетите новые факты, не удаляя нужную старую информацию.\n` : ''}
 
     ИСТОЧНИКИ ДЛЯ РАБОТЫ:
     ${sources}
 
-    УТВЕРЖДЕННЫЙ ПЛАН ОТ ГЛАВНОГО РЕДАКТОРА:
+    УТВЕРЖДЕННЫЙ ПЛАН:
     Заголовок: ${plan.title}
     Структура: ${plan.outline}
 
     ЦЕЛЬ ЗАДАЧИ:
     ${goal}
-
-    ВЕРНИТЕ СТРОГО JSON:
-    {
-      "thinking": "как вы реализовывали план (кратко)",
-      "markdown": "ПОЛНЫЙ, КАЧЕСТВЕННЫЙ ТЕКСТ СТАТЬИ в формате Markdown на основе источников и плана"
-    }
   `;
 
   let draft;
   try {
-    const draftText = await callGemini(model, [{ role: 'user', parts: [{ text: draftPrompt }] }], { responseMimeType: 'application/json', signal: options?.signal, checkPause: options?.checkPause });
+    const draftText = await callGemini(model, [{ role: 'user', parts: getParts(draftPrompt) }], { 
+      responseMimeType: 'application/json',
+      responseSchema: {
+        type: "object",
+        properties: {
+          thinking: { type: "string", description: "как вы реализовывали план (кратко)" },
+          markdown: { type: "string", description: "ПОЛНЫЙ, КАЧЕСТВЕННЫЙ ТЕКСТ СТАТЬИ в формате Markdown на основе источников и плана" }
+        },
+        required: ["thinking", "markdown"]
+      },
+      systemInstruction: sysInstruction,
+      signal: options?.signal, 
+      checkPause: options?.checkPause 
+    });
     draft = extractJson(draftText);
   } catch (error: any) { throw new Error(`Ошибка на этапе написания черновика: ${error.message || String(error)}`); }
 
@@ -153,8 +209,7 @@ export async function generateArticleFromSources(
   if (options?.onProgress) options.onProgress('Этап 3: Финальное ревью и проверка качества...');
   
   const reviewPrompt = `
-    Вы — Редактор-Корректор (QA). Проверьте черновик статьи.
-    Сделайте текст более читаемым, исправьте опечатки, улучшите форматирование (Markdown). Убедитесь, что цель задачи выполнена.
+    Проверьте черновик статьи. Сделайте текст более читаемым, исправьте опечатки, улучшите форматирование (Markdown). Убедитесь, что цель задачи выполнена.
 
     ЦЕЛЬ ЗАДАЧИ: ${goal}
     ${historyPrompt}
@@ -163,18 +218,26 @@ export async function generateArticleFromSources(
     ${draft.markdown}
 
     Сгенерируйте итоговый улучшенный текст, добавьте теги и краткое описание.
-    ВЕРНИТЕ СТРОГО JSON:
-    {
-      "thinking": "какие улучшения были внесены в черновик",
-      "markdown": "Итоговый улучшенный текст статьи (весь полностью)",
-      "tags": ["тег1", "тег2"],
-      "description": "краткое описание статьи (до 200 символов)"
-    }
   `;
 
   let review;
   try {
-    const reviewText = await callGemini(model, [{ role: 'user', parts: [{ text: reviewPrompt }] }], { responseMimeType: 'application/json', signal: options?.signal, checkPause: options?.checkPause });
+    const reviewText = await callGemini(model, [{ role: 'user', parts: getParts(reviewPrompt) }], { 
+      responseMimeType: 'application/json',
+      responseSchema: {
+        type: "object",
+        properties: {
+          thinking: { type: "string", description: "какие улучшения были внесены в черновик" },
+          markdown: { type: "string", description: "Итоговый улучшенный текст статьи (весь полностью)" },
+          tags: { type: "array", items: { type: "string" } },
+          description: { type: "string", description: "краткое описание статьи (до 200 символов)" }
+        },
+        required: ["thinking", "markdown", "tags", "description"]
+      },
+      systemInstruction: sysInstruction,
+      signal: options?.signal, 
+      checkPause: options?.checkPause 
+    });
     review = extractJson(reviewText);
   } catch (error: any) { throw new Error(`Ошибка на этапе проверки: ${error.message || String(error)}`); }
 
@@ -216,10 +279,11 @@ export async function generateFAQ(
 export async function extractTextFromFile(
   base64: string, 
   mimeType: string, 
-  model: GeminiModelId = DEFAULT_MODEL,
+  _model?: any, // Ignored to force cheap model
   options?: { signal?: AbortSignal, checkPause?: () => Promise<void> }
 ) {
   const safeMimeType = mimeType === 'application/octet-stream' ? 'text/plain' : mimeType;
+  const parsingModel = 'gemini-3.1-flash-lite';
 
   const prompt = `Извлеки весь значимый текст из этого файла. 
     Если это HTML, убери скрипты и стили, верни только контент. 
@@ -228,7 +292,7 @@ export async function extractTextFromFile(
 
   try {
     const text = await callGemini(
-      model,
+      parsingModel as GeminiModelId,
       [{ role: 'user', parts: [{ text: prompt }, { inlineData: { data: base64, mimeType: safeMimeType } }] }],
       { signal: options?.signal, checkPause: options?.checkPause }
     );

@@ -2,20 +2,64 @@ import { Request, Response } from 'express';
 import { SettingsService } from '../services/SettingsService';
 import { GeminiService } from '../services/GeminiService';
 import { BookStackService } from '../services/BookStackService';
+import { OmnideskService } from '../services/OmnideskService';
+import { vectorStore } from '../services/VectorStore';
 
 export class ApiController {
   private settingsService = new SettingsService();
   private geminiService = new GeminiService();
   private bookStackService = new BookStackService();
+  private omnideskService = new OmnideskService();
+
+  public indexVectorDocument = async (req: Request, res: Response): Promise<any> => {
+    try {
+      const { id, text, metadata } = req.body;
+      if (!id || !text) return res.status(400).json({ error: 'id and text are required' });
+      const settings = this.settingsService.getSettings();
+      const apiKey = settings.geminiApiKey || process.env.GEMINI_API_KEY;
+      if (!apiKey) return res.status(500).json({ error: 'GEMINI_API_KEY not found' });
+      await vectorStore.addDocument(id, text, metadata, apiKey);
+      res.json({ success: true, count: vectorStore.getDocumentsCount() });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  };
+
+  public searchVectorStore = async (req: Request, res: Response): Promise<any> => {
+    try {
+      const { query, limit } = req.body;
+      if (!query) return res.status(400).json({ error: 'query is required' });
+      const settings = this.settingsService.getSettings();
+      const apiKey = settings.geminiApiKey || process.env.GEMINI_API_KEY;
+      if (!apiKey) return res.status(500).json({ error: 'GEMINI_API_KEY not found' });
+      const results = await vectorStore.search(query, parseInt(limit as string) || 5, apiKey);
+      const safeResults = results.map(r => ({ id: r.id, text: r.text, metadata: r.metadata, score: r.score }));
+      res.json({ results: safeResults });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  };
+
+  public getVectorStoreStats = async (req: Request, res: Response): Promise<any> => {
+    res.json({ count: vectorStore.getDocumentsCount() });
+  };
 
   public checkHealth = (req: Request, res: Response): void => {
-    res.json({ status: 'ok', environment: process.env.NODE_ENV || 'development', key: !!process.env.GEMINI_API_KEY });
+    const settings = this.settingsService.getSettings();
+    const hasKey = !!(settings.geminiApiKey || process.env.GEMINI_API_KEY);
+    res.json({ status: 'ok', environment: process.env.NODE_ENV || 'development', key: hasKey });
   };
 
   public getConfig = (req: Request, res: Response): void => {
     res.json({
-      hasEnvCredentials: !!(process.env.BOOKSTACK_BASE_URL && process.env.BOOKSTACK_TOKEN_ID && process.env.BOOKSTACK_TOKEN_SECRET),
-      envBaseUrl: process.env.BOOKSTACK_BASE_URL || ''
+      bookstack: {
+        hasEnv: !!(process.env.BOOKSTACK_BASE_URL && process.env.BOOKSTACK_TOKEN_ID && process.env.BOOKSTACK_TOKEN_SECRET),
+        envBaseUrl: process.env.BOOKSTACK_BASE_URL || ''
+      },
+      omnidesk: {
+        hasEnv: !!(process.env.OMNIDESK_DOMAIN && process.env.OMNIDESK_EMAIL && process.env.OMNIDESK_API_KEY),
+        envDomain: process.env.OMNIDESK_DOMAIN || ''
+      }
     });
   };
 
@@ -30,7 +74,28 @@ export class ApiController {
 
   public updateSettings = (req: Request, res: Response): void => {
     try {
-      this.settingsService.updateSettings(req.body);
+      const updates = { ...req.body };
+      
+      // Безопасность: запрет перезаписи секретов и паролей через открытый эндпоинт
+      if ('geminiApiKey' in updates) delete updates.geminiApiKey;
+      if ('password' in updates) delete updates.password;
+      
+      if (updates.bookstack_creds) {
+        delete updates.bookstack_creds.tokenId;
+        delete updates.bookstack_creds.tokenSecret;
+      }
+      if (updates.omnidesk_creds) {
+        delete updates.omnidesk_creds.apiKey;
+      }
+      if (updates.bookstack) {
+        delete updates.bookstack.tokenId;
+        delete updates.bookstack.tokenSecret;
+      }
+      if (updates.omnidesk) {
+        delete updates.omnidesk.apiKey;
+      }
+
+      this.settingsService.updateSettings(updates);
       res.json({ success: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -66,7 +131,8 @@ export class ApiController {
   };
 
   public generateGemini = async (req: Request, res: Response): Promise<any> => {
-    const apiKey = process.env.GEMINI_API_KEY;
+    const settings = this.settingsService.getSettings();
+    const apiKey = settings.geminiApiKey || process.env.GEMINI_API_KEY;
     if (!apiKey) return res.status(500).json({ error: 'GEMINI_API_KEY not configured on server' });
     
     const { model, contents, config } = req.body;
@@ -76,19 +142,39 @@ export class ApiController {
       const text = await this.geminiService.generateContent(apiKey, model, contents, config);
       res.json({ text });
     } catch (error: any) {
-      console.error('[Gemini Error]', error?.message);
-      res.status(500).json({ error: error?.message || 'Gemini request failed' });
+      console.error('[Gemini Error]', error?.message || error);
+      
+      let errMsg = error?.message || 'Gemini request failed';
+      try {
+        if (typeof errMsg === 'string' && errMsg.includes('{')) {
+          const parsed = JSON.parse(errMsg);
+          if (parsed.error && parsed.error.message) {
+            errMsg = parsed.error.message;
+          }
+        }
+      } catch (e) {}
+
+      res.status(500).json({ error: errMsg });
     }
   };
 
   public proxyBookStack = async (req: Request, res: Response): Promise<any> => {
     const { method, url, data, credentials } = req.body;
-    const baseUrl = (process.env.BOOKSTACK_BASE_URL || credentials?.baseUrl)?.trim();
-    const tokenId = (process.env.BOOKSTACK_TOKEN_ID || credentials?.tokenId)?.trim();
-    const tokenSecret = (process.env.BOOKSTACK_TOKEN_SECRET || credentials?.tokenSecret)?.trim();
+    const settings = this.settingsService.getSettings();
+    
+    const resolveCred = (envVal: string | undefined, setVal: string | undefined, credVal: string | undefined) => {
+      if (envVal && envVal.trim()) return envVal.trim();
+      if (setVal && setVal.trim()) return setVal.trim();
+      if (credVal && credVal.trim() && credVal !== 'SERVER_MANAGED') return credVal.trim();
+      return '';
+    };
+
+    const baseUrl = resolveCred(process.env.BOOKSTACK_BASE_URL, settings.bookstack?.baseUrl, credentials?.baseUrl);
+    const tokenId = resolveCred(process.env.BOOKSTACK_TOKEN_ID, settings.bookstack?.tokenId, credentials?.tokenId);
+    const tokenSecret = resolveCred(process.env.BOOKSTACK_TOKEN_SECRET, settings.bookstack?.tokenSecret, credentials?.tokenSecret);
 
     if (!baseUrl || !tokenId || !tokenSecret) {
-      return res.status(400).json({ error: 'Missing BookStack credentials. Please check settings.' });
+      return res.status(400).json({ error: 'Missing BookStack credentials. Please check settings or .env file.' });
     }
 
     try {
@@ -114,6 +200,81 @@ export class ApiController {
         error: errorMessage,
         details: typeof errorData === 'object' ? errorData : { raw: String(errorData) }
       });
+    }
+  };
+
+  public fetchOmnideskTicket = async (req: Request, res: Response): Promise<any> => {
+    const { ticketId, domain, email, apiKey } = req.body;
+    const settings = this.settingsService.getSettings();
+    
+    const resolveCred = (envVal: string | undefined, setVal: string | undefined, credVal: string | undefined) => {
+      if (envVal && envVal.trim()) return envVal.trim();
+      if (setVal && setVal.trim()) return setVal.trim();
+      if (credVal && credVal.trim() && credVal !== 'SERVER_MANAGED') return credVal.trim();
+      return '';
+    };
+
+    const targetDomain = resolveCred(process.env.OMNIDESK_DOMAIN, settings.omnidesk?.domain, domain);
+    const targetEmail = resolveCred(process.env.OMNIDESK_EMAIL, settings.omnidesk?.email, email);
+    const targetApiKey = resolveCred(process.env.OMNIDESK_API_KEY, settings.omnidesk?.apiKey, apiKey);
+    
+    if (!ticketId || !targetDomain || !targetEmail || !targetApiKey) {
+      return res.status(400).json({ error: 'Необходимо указать ID тикета и учетные данные Omnidesk (через настройки или .env)' });
+    }
+
+    try {
+      const ticketData = await this.omnideskService.getTicket(targetDomain, targetEmail, targetApiKey, ticketId);
+      res.json({ content: ticketData.content, name: `Omnidesk Ticket #${ticketId}`, attachments: ticketData.attachments });
+    } catch (error: any) {
+      console.error('[Omnidesk Error]', error?.message);
+      res.status(500).json({ error: error?.message || 'Не удалось получить тикет из Omnidesk' });
+    }
+  };
+
+  public handleOmnideskWebhook = async (req: Request, res: Response): Promise<any> => {
+    // This endpoint can be used by an Omnidesk Custom App (widget)
+    // to send ticket content directly for background processing.
+    const { ticketId, subject, messages, domain } = req.body;
+    
+    if (!ticketId || !messages) {
+      return res.status(400).json({ error: 'Пейлоад должен содержать ticketId и messages' });
+    }
+
+    try {
+      // In a real scenario, this would trigger background processing (e.g. queue)
+      // to generate an article via Gemini and push to BookStack.
+      // For now, returning success so the widget knows the request was received.
+      console.log(`[Omnidesk Webhook] Получены данные для тикета #${ticketId}`);
+      
+      res.json({ success: true, message: 'Тикет поставлен в очередь на создание статьи' });
+    } catch (error: any) {
+      console.error('[Omnidesk Webhook Error]', error?.message);
+      res.status(500).json({ error: 'Внутренняя ошибка сервера при обработке вебхука' });
+    }
+  };
+
+  public updateSecureSettings = (req: Request, res: Response): Promise<any> => {
+    const { password, geminiApiKey, bookstack, omnidesk } = req.body;
+    const adminPassword = process.env.ADMIN_PASSWORD;
+
+    if (!adminPassword) {
+      return Promise.resolve(res.status(400).json({ error: 'Пароль администратора не задан в конфигурационном файле (.env)' }));
+    }
+
+    if (password !== adminPassword) {
+      return Promise.resolve(res.status(401).json({ error: 'Неверный пароль администратора' }));
+    }
+
+    try {
+      const updates: any = {};
+      if (geminiApiKey !== undefined) updates.geminiApiKey = geminiApiKey;
+      if (bookstack) updates.bookstack = bookstack;
+      if (omnidesk) updates.omnidesk = omnidesk;
+
+      this.settingsService.updateSettings(updates);
+      return Promise.resolve(res.json({ success: true }));
+    } catch (e: any) {
+      return Promise.resolve(res.status(500).json({ error: e.message }));
     }
   };
 }

@@ -41,6 +41,7 @@ interface EditorConsoleProps {
   chatHistory: { role: string; content: string }[];
   sources: { name: string; content: string; selected?: boolean }[];
   setSyncStatus: React.Dispatch<React.SetStateAction<{ type: 'success' | 'error' | 'idle', message: string, url?: string }>>;
+  books: any[];
 }
 
 export const EditorConsole = React.memo(function EditorConsole({
@@ -62,7 +63,8 @@ export const EditorConsole = React.memo(function EditorConsole({
   handleRefinement,
   chatHistory,
   sources,
-  setSyncStatus
+  setSyncStatus,
+  books
 }: EditorConsoleProps) {
   return (
     <AnimatePresence>
@@ -237,6 +239,11 @@ export const EditorConsole = React.memo(function EditorConsole({
                         ) : (
                           <span className="font-mono text-xs font-bold">{lastResponse.targetBookId ?? (lastResponse.newBookName ? 'НОВАЯ: ' + lastResponse.newBookName : 'Не указан')}</span>
                         )}
+                        {lastResponse.targetBookId && (
+                          <div className="mt-1 text-[10px] text-gray-500 font-medium truncate" title={books?.find((b: any) => b.id === lastResponse.targetBookId)?.name}>
+                            {books?.find((b: any) => b.id === lastResponse.targetBookId)?.name || 'Книга не найдена'}
+                          </div>
+                        )}
                       </div>
                       <div className="p-4 bg-gray-50 border border-editorial-text/10">
                         <span className="block text-[8px] uppercase tracking-widest text-gray-400 mb-1">ID Главы</span>
@@ -272,6 +279,24 @@ export const EditorConsole = React.memo(function EditorConsole({
                         )}
                       </div>
                     </div>
+
+                    {lastResponse.duplicateLinks && lastResponse.duplicateLinks.length > 0 && (
+                      <div className="mt-4 p-4 border-2 border-red-500 bg-red-50">
+                        <span className="block text-[10px] uppercase tracking-widest text-red-600 mb-2 font-bold flex items-center gap-2">
+                           <AlertCircle size={14} /> Найдены дублирующие статьи в базе
+                        </span>
+                        <ul className="space-y-2 mt-3">
+                          {lastResponse.duplicateLinks.map((link, i) => (
+                            <li key={i} className="flex items-center gap-2">
+                              <span className="text-red-500">•</span>
+                              <a href={link} target="_blank" rel="noopener noreferrer" className="text-xs font-bold text-red-700 hover:text-red-900 hover:underline">
+                                {link}
+                              </a>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
                   </section>
 
                   {/* Grounding Sources */}

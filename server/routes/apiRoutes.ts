@@ -17,6 +17,14 @@ apiRouter.route('/settings')
   .get(apiController.getSettings)
   .post(apiController.updateSettings);
 
+apiRouter.post('/settings/secure-update', apiController.updateSecureSettings);
+
 apiRouter.post('/process-source', upload.single('file'), apiController.processSource);
 apiRouter.post('/gemini/generate', apiController.generateGemini);
 apiRouter.post('/bookstack/proxy', apiController.proxyBookStack);
+apiRouter.post('/omnidesk/ticket', apiController.fetchOmnideskTicket);
+apiRouter.post('/omnidesk/webhook', apiController.handleOmnideskWebhook);
+
+apiRouter.post('/vectordb/index', apiController.indexVectorDocument);
+apiRouter.post('/vectordb/search', apiController.searchVectorStore);
+apiRouter.get('/vectordb/stats', apiController.getVectorStoreStats);

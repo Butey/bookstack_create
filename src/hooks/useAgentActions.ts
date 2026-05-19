@@ -13,7 +13,7 @@ export function useAgentActions(params: {
   selectedPageId: number | null,
   targetMode: 'create' | 'update',
   setTargetMode: any,
-  sources: { name: string; content: string; selected?: boolean }[],
+  sources: { name: string; content: string; selected?: boolean; attachments?: any[] }[],
   content: string,
   setContent: any,
   setSources: any,
@@ -25,6 +25,11 @@ export function useAgentActions(params: {
   workMode: 'auto' | 'review',
   geminiModel: GeminiModelId,
   instructions: string,
+  systemInstruction?: string,
+  dataStructure?: string,
+  searchPrompt: string,
+  duplicatePrompt: string,
+  contextPrompt: string,
   setPendingApproval: any,
   setIsConsoleOpen: any,
   setRagConfirmation: any,
@@ -106,6 +111,18 @@ export function useAgentActions(params: {
           finalTags
         );
         pageUrl = createRes?.url || '';
+        if (createRes?.id) {
+          try {
+            const { indexVectorDocument } = await import('../services/api');
+            await indexVectorDocument(`bookstack:page:${createRes.id}`, processed.markdown, {
+              name: processed.title,
+              book_id: activeBookId,
+              url: pageUrl
+            });
+          } catch(err) {
+            console.error('Failed to index to vector DB', err);
+          }
+        }
       } else if (publishPageId) {
         const updateRes = await updatePage(
           credentials,
@@ -115,6 +132,16 @@ export function useAgentActions(params: {
           finalTags
         );
         pageUrl = updateRes?.url || '';
+        try {
+          const { indexVectorDocument } = await import('../services/api');
+          await indexVectorDocument(`bookstack:page:${publishPageId}`, processed.markdown, {
+            name: processed.title,
+            book_id: activeBookId,
+            url: pageUrl
+          });
+        } catch(err) {
+          console.error('Failed to index to vector DB', err);
+        }
       }
 
       executionControl.setSyncStatus({ 
@@ -138,11 +165,13 @@ export function useAgentActions(params: {
 
   const processGeneration = async (
     allSourcesText: string, 
+    allAttachments: { mimeType: string, data: string, name: string }[],
     currentTargetMode: string, 
     detectedPageId: number | null,
     detectedBookId: number | null,
     forceReview: boolean, 
-    ragMsg: string
+    ragMsg: string,
+    relatedPages?: any[]
   ) => {
     const { 
       credentials, books, chapters, selectedPageId, selectedBookId, instructions, geminiModel,
@@ -154,13 +183,41 @@ export function useAgentActions(params: {
       const pageIdToFetch = detectedPageId || selectedPageId;
       if (pageIdToFetch) {
         const { fetchPage } = await import('../services/api');
-        try {
-          const pageData = await fetchPage(credentials, pageIdToFetch);
-          existingContent = pageData.markdown || pageData.html || pageData.raw_html || '';
-        } catch (e) {
-          console.error("Could not fetch existing page content", e);
+        
+        let allExistingTexts = [];
+        // Optional: If we are merging duplicates, fetch all related pages
+        if (relatedPages && relatedPages.length > 1) {
+          executionControl.setSyncStatus({ type: 'idle', message: 'Сбор содержимого дублирующихся статей для объединения...' });
+          for (const rp of relatedPages) {
+            try {
+              const rpData = await fetchPage(credentials, rp.id);
+              const cnt = rpData.markdown || rpData.html || rpData.raw_html || '';
+              const pageUrl = rpData.url || `${credentials.baseUrl}/books/${rp.book_id}/page/${rp.id}`;
+              allExistingTexts.push(`--- СОДЕРЖИМОЕ СТАТЬИ "${rp.name}" (ID: ${rp.id}, Ссылка: ${pageUrl}) ---\n${cnt}`);
+            } catch (e) {
+              console.error(`Could not fetch related page ${rp.id}`, e);
+            }
+          }
+          if (allExistingTexts.length > 0) {
+            existingContent = `ВНИМАНИЕ РЕДАКТОРУ (ИИ): ОБНАРУЖЕНО НЕСКОЛЬКО СТАТЕЙ-ДУБЛИКАТОВ.\nВАША ЗАДАЧА ОБНОВИТЬ ГЛАВНУЮ И ОБЪЕДИНИТЬ В НЕЕ ПОЛЕЗНЫЕ ФАКТЫ ИЗ ДУБЛИКАТОВ (ЕСЛИ ЕСТЬ), ПЛЮС ИНФОРМАЦИЮ ИЗ НОВЫХ ИСТОЧНИКОВ.\n\n${allExistingTexts.join('\n\n')}`;
+          }
+        } else {
+          try {
+            const pageData = await fetchPage(credentials, pageIdToFetch);
+            const pageUrl = pageData.url || `${credentials.baseUrl}/books/${pageData.book_id}/page/${pageData.id}`;
+            existingContent = `--- Ссылка на статью: ${pageUrl} ---\n\n` + (pageData.markdown || pageData.html || pageData.raw_html || '');
+          } catch (e) {
+            console.error("Could not fetch existing page content", e);
+          }
         }
       }
+    } else if (currentTargetMode === 'create' && relatedPages && relatedPages.length > 0) {
+       // if we are creating, but there are related pages, pass them as duplicates info
+       const duplicateLines = relatedPages.map(rp => {
+          const pageUrl = rp.url || `${credentials.baseUrl}/books/${rp.book_id}/page/${rp.id}`;
+          return `- "${rp.name}" (ID: ${rp.id}, Ссылка: ${pageUrl})`;
+       });
+       existingContent = `Найдены дублирующие статьи:\n${duplicateLines.join('\n')}`;
     }
 
     await executionControl.checkPauseAndAbort();
@@ -168,17 +225,20 @@ export function useAgentActions(params: {
     
     const processed = await generateArticleFromSources(
       allSourcesText, 
-      instructions || 'Составьте краткий обзор и организуйте данные в профессиональное руководство.',
+      params.instructions || 'Составьте краткий обзор и организуйте данные в профессиональное руководство.',
       currentTargetMode as 'create' | 'update',
-      { books, chapters },
+      { books: params.books, chapters: params.chapters },
       [],
-      geminiModel,
+      params.geminiModel,
       existingContent,
       { 
-        signal: executionControl.abortControllerRef.current?.signal, 
-        checkPause: executionControl.checkPauseAndAbort,
-        onProgress: (msg) => executionControl.setSyncStatus({ type: 'idle', message: msg }) 
-      }
+        signal: params.executionControl.abortControllerRef.current?.signal, 
+        checkPause: params.executionControl.checkPauseAndAbort,
+        onProgress: (msg) => params.executionControl.setSyncStatus({ type: 'idle', message: msg }),
+        systemInstruction: params.systemInstruction,
+        dataStructure: params.dataStructure
+      },
+      allAttachments
     );
     
     processed.targetPublishMode = currentTargetMode as 'create' | 'update';
@@ -252,40 +312,48 @@ export function useAgentActions(params: {
       }
 
       const allSourcesText = selectedSources.map(s => `SOURCE: ${s.name}\n${s.content}`).join('\n\n') + (content ? `\n\nTEXT:\n${content}` : '');
+      const allAttachments = selectedSources.flatMap(s => s.attachments || []);
       
       let currentTargetMode = targetMode;
       let forceReview = false;
       let ragMsg = '';
       let detectedPageId: number | null = null;
+      let detectedBookId: number | null = null;
+      let analysis: any = null;
 
       if (targetMode === 'create') {
         executionControl.setSyncProgress({ step: 1, total: 4, label: 'Запуск Agentic RAG...' });
         const { agenticRagWorkflow } = await import('../services/agent');
         
-        const analysis = await agenticRagWorkflow(
+        analysis = await agenticRagWorkflow(
           allSourcesText, 
           instructions, 
           credentials, 
           geminiModel, 
           (msg) => executionControl.setSyncStatus({ type: 'idle', message: msg }),
-          { signal: executionControl.abortControllerRef.current?.signal, checkPause: executionControl.checkPauseAndAbort }
+          { signal: executionControl.abortControllerRef.current?.signal, checkPause: executionControl.checkPauseAndAbort, searchPrompt: params.searchPrompt, duplicatePrompt: params.duplicatePrompt, contextPrompt: params.contextPrompt }
         );
         
-        if (analysis.decision === 'update' && analysis.targetPageId) {
+        if ((analysis.decision === 'update' && analysis.targetPageId) || (analysis.decision === 'create' && analysis.relatedPages && analysis.relatedPages.length > 0)) {
           setRagConfirmation({
-            pageName: analysis.targetPageName,
-            pageId: analysis.targetPageId,
-            bookId: analysis.targetBookId,
+            pageName: analysis.targetPageName || 'Новая статья',
+            pageId: analysis.targetPageId || 0,
+            bookId: analysis.targetBookId || selectedBookId,
             allSourcesText,
+            allAttachments,
             analysis
           });
           executionControl.setIsSyncing(false);
           executionControl.setSyncStatus({ type: 'idle', message: 'Ожидается решение: создание или обновление' });
           return;
         }
+
+        if (analysis.decision === 'create') {
+           detectedBookId = analysis.targetBookId;
+        }
       }
 
-      await processGeneration(allSourcesText, currentTargetMode, detectedPageId, null, forceReview, ragMsg);
+      await processGeneration(allSourcesText, allAttachments, currentTargetMode, detectedPageId, detectedBookId, forceReview, ragMsg, analysis?.relatedPages);
     } catch (e: any) {
       console.error(e);
       executionControl.setSyncStatus({ type: 'error', message: e.message || 'Произошла ошибка при генерации.' });
@@ -314,6 +382,7 @@ export function useAgentActions(params: {
       await executionControl.checkPauseAndAbort();
       const selectedSources = sources.filter(s => s.selected !== false);
       const allSourcesText = selectedSources.map(s => `ИСТОЧНИК: ${s.name}\n${s.content}`).join('\n\n') + (content ? `\n\nТЕКСТ:\n${content}` : '');
+      const allAttachments = selectedSources.flatMap(s => s.attachments || []);
       
       const refined = await generateArticleFromSources(
         allSourcesText, 
@@ -326,8 +395,11 @@ export function useAgentActions(params: {
         { 
           signal: executionControl.abortControllerRef.current?.signal, 
           checkPause: executionControl.checkPauseAndAbort,
-          onProgress: (msg) => executionControl.setSyncStatus({ type: 'idle', message: msg })
-        }
+          onProgress: (msg) => executionControl.setSyncStatus({ type: 'idle', message: msg }),
+          systemInstruction: params.systemInstruction,
+          dataStructure: params.dataStructure
+        },
+        allAttachments
       );
       
       refined.targetPublishMode = targetMode;
@@ -411,7 +483,7 @@ export function useAgentActions(params: {
     setRagConfirmation(null);
 
     try {
-      const { allSourcesText, pageId, bookId, pageName } = ragConfirmation;
+      const { allSourcesText, allAttachments, pageId, bookId, pageName } = ragConfirmation;
       
       let currentTargetMode = 'create';
       let detectedPageId: number | null = null;
@@ -434,7 +506,7 @@ export function useAgentActions(params: {
         executionControl.setSyncStatus({ type: 'idle', message: `Выбрана стратегия: Создание новой статьи` });
       }
 
-      await processGeneration(allSourcesText, currentTargetMode, detectedPageId, detectedBookId, forceReview, ragMsg);
+      await processGeneration(allSourcesText, allAttachments || [], currentTargetMode, detectedPageId, detectedBookId, forceReview, ragMsg, ragConfirmation.analysis?.relatedPages);
     } catch (e: any) {
       console.error(e);
       executionControl.setSyncStatus({ type: 'error', message: e.message || 'Произошла ошибка при генерации.' });

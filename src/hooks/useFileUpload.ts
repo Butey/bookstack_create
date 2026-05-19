@@ -4,7 +4,7 @@ import { extractTextFromFile, GeminiModelId } from '../services/gemini';
 
 export function useFileUpload(
   geminiModel: GeminiModelId,
-  setSources: React.Dispatch<React.SetStateAction<{ name: string; content: string; selected?: boolean }[]>>,
+  setSources: React.Dispatch<React.SetStateAction<{ name: string; content: string; selected?: boolean; attachments?: any[] }[]>>,
   setSystemInstruction: React.Dispatch<React.SetStateAction<string>>,
   setDataStructure: React.Dispatch<React.SetStateAction<string>>,
   executionControl: {
@@ -64,7 +64,24 @@ export function useFileUpload(
           checkPause: executionControl.checkPauseAndAbort
         });
         
-        setSources(prev => [...prev, { name: file.name, content: extractedText }]);
+        const attachList = [];
+        if (mimeType.startsWith('image/') || mimeType === 'application/pdf') {
+          attachList.push({ name: file.name, mimeType, data: base64Str });
+        }
+        
+        setSources(prev => [...prev, { name: file.name, content: extractedText, attachments: attachList.length ? attachList : undefined }]);
+
+        // Index the file into vector store
+        try {
+          const { indexVectorDocument } = await import('../services/api');
+          await indexVectorDocument(`file:${Date.now()}_${file.name}`, extractedText, {
+            name: file.name,
+            type: 'uploaded_file'
+          });
+        } catch (err) {
+          console.error('Failed to index file to vector DB', err);
+        }
+
         executionControl.setSyncStatus({ type: 'success', message: `${prefix}Источник "${file.name}" добавлен.` });
         
         setUploadProgress({ percent: Math.round(basePercent + totalWeightPerFile), label: `${prefix}Завершено` });

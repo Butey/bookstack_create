@@ -1,7 +1,8 @@
+import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { FileText, Terminal, ClipboardList, Brain, Loader2 } from 'lucide-react';
+import { FileText, Terminal, ClipboardList, Brain, Loader2, Download, Upload } from 'lucide-react';
 import { GEMINI_MODELS, GeminiModelId } from '../services/gemini';
-import { BookStackCredentials } from '../types';
+import { BookStackCredentials, OmnideskCredentials } from '../types';
 
 interface ConfigurationModalProps {
   isOpen: boolean;
@@ -9,30 +10,105 @@ interface ConfigurationModalProps {
   setSystemInstruction: (val: string) => void;
   dataStructure: string;
   setDataStructure: (val: string) => void;
+  searchPrompt: string;
+  setSearchPrompt: (val: string) => void;
+  duplicatePrompt: string;
+  setDuplicatePrompt: (val: string) => void;
+  contextPrompt: string;
+  setContextPrompt: (val: string) => void;
   workMode: 'auto' | 'review';
   setWorkMode: (mode: 'auto' | 'review') => void;
   geminiModel: GeminiModelId;
   setGeminiModel: (id: GeminiModelId) => void;
   credentials: BookStackCredentials;
   setCredentials: (creds: BookStackCredentials) => void;
-  serverConfig: { hasEnvCredentials: boolean; envBaseUrl: string } | null;
+  omnideskCreds: OmnideskCredentials;
+  setOmnideskCreds: (creds: OmnideskCredentials) => void;
+  serverConfig: { 
+    bookstack: { hasEnv: boolean; envBaseUrl: string };
+    omnidesk: { hasEnv: boolean; envDomain: string };
+  } | null;
   handleSpecialFileUpload: (e: React.ChangeEvent<HTMLInputElement>, target: 'system' | 'structure') => void;
   loadBooks: () => void;
   isLoadingBooks: boolean;
+  onSave: () => void;
 }
 
 export function ConfigurationModal({
   isOpen,
   systemInstruction, setSystemInstruction,
   dataStructure, setDataStructure,
+  searchPrompt, setSearchPrompt,
+  duplicatePrompt, setDuplicatePrompt,
+  contextPrompt, setContextPrompt,
   workMode, setWorkMode,
   geminiModel, setGeminiModel,
   credentials, setCredentials,
+  omnideskCreds, setOmnideskCreds,
   serverConfig,
   handleSpecialFileUpload,
   loadBooks,
-  isLoadingBooks
+  isLoadingBooks,
+  onSave
 }: ConfigurationModalProps) {
+  const [adminPassword, setAdminPassword] = useState('');
+  const [isUnlocked, setIsUnlocked] = useState(false);
+  const [secureMessage, setSecureMessage] = useState('');
+  const [isUpdatingSecure, setIsUpdatingSecure] = useState(false);
+
+  const [tempGeminiKey, setTempGeminiKey] = useState('');
+
+  const handleUpdateSecureSettings = async () => {
+    setIsUpdatingSecure(true);
+    setSecureMessage('');
+    try {
+      const res = await fetch('/api/settings/secure-update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          password: adminPassword, 
+          geminiApiKey: tempGeminiKey || undefined,
+          bookstack: credentials,
+          omnidesk: omnideskCreds
+        })
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      setSecureMessage('Все настройки успешно обновлены');
+      setIsUnlocked(false);
+      setAdminPassword('');
+      setTempGeminiKey('');
+    } catch (e: any) {
+      setSecureMessage(e.message || 'Ошибка обновления настроек');
+    } finally {
+      setIsUpdatingSecure(false);
+      setTimeout(() => setSecureMessage(''), 5000);
+    }
+  };
+
+  const handleExportMD = (content: string, filename: string) => {
+    const blob = new Blob([content], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${filename}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImportMD = (e: React.ChangeEvent<HTMLInputElement>, setter: (val: string) => void) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const content = event.target?.result as string;
+        if (content) setter(content);
+      };
+      reader.readAsText(file);
+    }
+    e.target.value = '';
+  };
+
   return (
     <AnimatePresence>
       {isOpen && (
@@ -43,17 +119,23 @@ export function ConfigurationModal({
           className="overflow-hidden"
         >
           <div className="p-8 bg-white border-2 border-editorial-text shadow-[4px_4px_0px_0px_rgba(26,26,26,1)] flex flex-col gap-6">
-            <h2 className="font-serif text-2xl italic tracking-tight">Настройки Агента и Книги</h2>
+            <div className="flex justify-between items-center">
+              <h2 className="font-serif text-2xl italic tracking-tight">Настройки Агента</h2>
+            </div>
             
             <div className="space-y-4">
               <div className="space-y-2">
                 <div className="flex justify-between items-center">
                   <label className="text-[10px] font-bold uppercase tracking-widest text-[#8E8E8A]">Системная инструкция агента</label>
-                  <label className="flex items-center gap-1 cursor-pointer text-[9px] font-bold uppercase tracking-widest text-editorial-text hover:underline">
-                    <FileText size={10} />
-                    Загрузить .md
-                    <input type="file" className="hidden" accept=".md,.txt" onChange={(e) => handleSpecialFileUpload(e, 'system')} />
-                  </label>
+                  <div className="flex items-center gap-3">
+                    <button onClick={() => handleExportMD(systemInstruction, 'system_instruction')} className="flex items-center gap-1 cursor-pointer text-[9px] font-bold uppercase tracking-widest text-editorial-text hover:underline">
+                      <Download size={10} /> Экспорт .md
+                    </button>
+                    <label className="flex items-center gap-1 cursor-pointer text-[9px] font-bold uppercase tracking-widest text-editorial-text hover:underline">
+                      <Upload size={10} /> Импорт .md
+                      <input type="file" className="hidden" accept=".md,.txt" onChange={(e) => handleImportMD(e, setSystemInstruction)} />
+                    </label>
+                  </div>
                 </div>
                 <textarea 
                   className="w-full h-24 p-3 bg-[#F5F5F3] border-b-2 border-editorial-text focus:bg-white outline-none text-sm font-medium"
@@ -66,17 +148,84 @@ export function ConfigurationModal({
               <div className="space-y-2">
                 <div className="flex justify-between items-center">
                   <label className="text-[10px] font-bold uppercase tracking-widest text-[#8E8E8A]">Правила структуры данных</label>
-                  <label className="flex items-center gap-1 cursor-pointer text-[9px] font-bold uppercase tracking-widest text-editorial-text hover:underline">
-                    <FileText size={10} />
-                    Загрузить .md
-                    <input type="file" className="hidden" accept=".md,.txt" onChange={(e) => handleSpecialFileUpload(e, 'structure')} />
-                  </label>
+                  <div className="flex items-center gap-3">
+                    <button onClick={() => handleExportMD(dataStructure, 'data_structure')} className="flex items-center gap-1 cursor-pointer text-[9px] font-bold uppercase tracking-widest text-editorial-text hover:underline">
+                      <Download size={10} /> Экспорт .md
+                    </button>
+                    <label className="flex items-center gap-1 cursor-pointer text-[9px] font-bold uppercase tracking-widest text-editorial-text hover:underline">
+                      <Upload size={10} /> Импорт .md
+                      <input type="file" className="hidden" accept=".md,.txt" onChange={(e) => handleImportMD(e, setDataStructure)} />
+                    </label>
+                  </div>
                 </div>
                 <textarea 
                   className="w-full h-32 p-3 bg-[#F5F5F3] border-b-2 border-editorial-text focus:bg-white outline-none text-sm font-medium"
                   placeholder="Укажите, как должна быть структурирована статья..."
                   value={dataStructure}
                   onChange={(e) => setDataStructure(e.target.value)}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex justify-between items-center">
+                  <label className="text-[10px] font-bold uppercase tracking-widest text-[#8E8E8A]">Генерация поисковых запросов (Bookstack)</label>
+                  <div className="flex items-center gap-3">
+                    <button onClick={() => handleExportMD(searchPrompt, 'search_prompt')} className="flex items-center gap-1 cursor-pointer text-[9px] font-bold uppercase tracking-widest text-editorial-text hover:underline">
+                      <Download size={10} /> Экспорт .md
+                    </button>
+                    <label className="flex items-center gap-1 cursor-pointer text-[9px] font-bold uppercase tracking-widest text-editorial-text hover:underline">
+                      <Upload size={10} /> Импорт .md
+                      <input type="file" className="hidden" accept=".md,.txt" onChange={(e) => handleImportMD(e, setSearchPrompt)} />
+                    </label>
+                  </div>
+                </div>
+                <textarea 
+                  className="w-full h-32 p-3 bg-[#F5F5F3] border-b-2 border-editorial-text focus:bg-white outline-none text-sm font-medium"
+                  placeholder="Доступные переменные: {goal}, {sources}"
+                  value={searchPrompt}
+                  onChange={(e) => setSearchPrompt(e.target.value)}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex justify-between items-center">
+                  <label className="text-[10px] font-bold uppercase tracking-widest text-[#8E8E8A]">Оценка дублей (Duplicate Detection)</label>
+                  <div className="flex items-center gap-3">
+                    <button onClick={() => handleExportMD(duplicatePrompt, 'duplicate_prompt')} className="flex items-center gap-1 cursor-pointer text-[9px] font-bold uppercase tracking-widest text-editorial-text hover:underline">
+                      <Download size={10} /> Экспорт .md
+                    </button>
+                    <label className="flex items-center gap-1 cursor-pointer text-[9px] font-bold uppercase tracking-widest text-editorial-text hover:underline">
+                      <Upload size={10} /> Импорт .md
+                      <input type="file" className="hidden" accept=".md,.txt" onChange={(e) => handleImportMD(e, setDuplicatePrompt)} />
+                    </label>
+                  </div>
+                </div>
+                <textarea 
+                  className="w-full h-32 p-3 bg-[#F5F5F3] border-b-2 border-editorial-text focus:bg-white outline-none text-sm font-medium"
+                  placeholder="Доступные переменные: {goal}, {sources}, {retrievedPages}"
+                  value={duplicatePrompt}
+                  onChange={(e) => setDuplicatePrompt(e.target.value)}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex justify-between items-center">
+                  <label className="text-[10px] font-bold uppercase tracking-widest text-[#8E8E8A]">Оценка релевантности (Context Detection)</label>
+                  <div className="flex items-center gap-3">
+                    <button onClick={() => handleExportMD(contextPrompt, 'context_prompt')} className="flex items-center gap-1 cursor-pointer text-[9px] font-bold uppercase tracking-widest text-editorial-text hover:underline">
+                      <Download size={10} /> Экспорт .md
+                    </button>
+                    <label className="flex items-center gap-1 cursor-pointer text-[9px] font-bold uppercase tracking-widest text-editorial-text hover:underline">
+                      <Upload size={10} /> Импорт .md
+                      <input type="file" className="hidden" accept=".md,.txt" onChange={(e) => handleImportMD(e, setContextPrompt)} />
+                    </label>
+                  </div>
+                </div>
+                <textarea 
+                  className="w-full h-32 p-3 bg-[#F5F5F3] border-b-2 border-editorial-text focus:bg-white outline-none text-sm font-medium"
+                  placeholder="Доступные переменные: {goal}, {sources}, {retrievedPages}"
+                  value={contextPrompt}
+                  onChange={(e) => setContextPrompt(e.target.value)}
                 />
               </div>
             </div>
@@ -119,48 +268,201 @@ export function ConfigurationModal({
                   ))}
                 </div>
               </div>
-              <div className="space-y-2 md:col-span-2">
-                <label className="text-[10px] font-bold uppercase tracking-widest text-[#8E8E8A]">URL Инстанса</label>
-                <input 
-                  type="text" 
-                  placeholder="https://wiki.example.com"
-                  className="w-full px-4 py-3 bg-[#F5F5F3] border-b-2 border-editorial-text focus:bg-white outline-none transition-all text-sm disabled:opacity-50"
-                  value={credentials.baseUrl}
-                  onChange={(e) => setCredentials({ ...credentials, baseUrl: e.target.value })}
-                  disabled={serverConfig?.hasEnvCredentials}
-                />
-                {serverConfig?.hasEnvCredentials && (
-                  <p className="text-[10px] text-green-600 font-bold uppercase tracking-widest mt-1">Определено в .env</p>
-                )}
-              </div>
-              <div className="space-y-2">
-                <label className="text-[10px] font-bold uppercase tracking-widest text-[#8E8E8A]">BookStack Token ID</label>
-                <input 
-                  type="text" 
-                  className="w-full px-4 py-3 bg-[#F5F5F3] border-b-2 border-editorial-text focus:bg-white outline-none transition-all text-sm font-mono disabled:opacity-50"
-                  value={credentials.tokenId}
-                  onChange={(e) => setCredentials({ ...credentials, tokenId: e.target.value })}
-                  disabled={serverConfig?.hasEnvCredentials}
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-[10px] font-bold uppercase tracking-widest text-[#8E8E8A]">BookStack Token Secret</label>
-                <input 
-                  type="password" 
-                  className="w-full px-4 py-3 bg-[#F5F5F3] border-b-2 border-editorial-text focus:bg-white outline-none transition-all text-sm font-mono disabled:opacity-50"
-                  value={credentials.tokenSecret}
-                  onChange={(e) => setCredentials({ ...credentials, tokenSecret: e.target.value })}
-                  disabled={serverConfig?.hasEnvCredentials}
-                />
-              </div>
+
+              {!isUnlocked && (
+                <div className="space-y-4 md:col-span-2 pt-4 border-t border-gray-100">
+                  <h3 className="text-sm font-serif italic text-gray-800">Безопасность и Интеграции</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                       <label className="text-[10px] font-bold uppercase tracking-widest text-[#8E8E8A]">Omnidesk Поддомен</label>
+                       <p className="text-sm font-mono text-editorial-text px-4 py-3 bg-[#F5F5F3] border-b-2 border-editorial-text/20">
+                         {omnideskCreds.domain ? `${omnideskCreds.domain}.omnidesk.ru` : 'Не задан'}
+                       </p>
+                    </div>
+                    <div className="space-y-2">
+                       <label className="text-[10px] font-bold uppercase tracking-widest text-[#8E8E8A]">BookStack URL</label>
+                       <p className="text-sm font-mono text-editorial-text px-4 py-3 bg-[#F5F5F3] border-b-2 border-editorial-text/20 overflow-hidden text-ellipsis">
+                         {credentials.baseUrl || 'Не задан'}
+                       </p>
+                    </div>
+                    {credentials.baseUrl && (
+                      <div className="md:col-span-2 space-y-2">
+                        <label className="text-[10px] font-bold uppercase tracking-widest text-[#8E8E8A]">Синхронизация знаний (Векторное хранилище)</label>
+                        <div className="flex items-center gap-4">
+                          <button
+                            onClick={async () => {
+                              const { syncBookstackToVectorStore } = await import('../services/api');
+                              setIsUpdatingSecure(true);
+                              setSecureMessage('Запуск загрузки базы...');
+                              try {
+                                await syncBookstackToVectorStore(credentials, (msg) => setSecureMessage(msg));
+                                setSecureMessage('Синхронизация успешно завершена.');
+                              } catch (e: any) {
+                                setSecureMessage('Ошибка: ' + e.message);
+                              } finally {
+                                setIsUpdatingSecure(false);
+                                setTimeout(() => setSecureMessage(''), 5000);
+                              }
+                            }}
+                            disabled={isUpdatingSecure}
+                            className="px-4 py-2 bg-editorial-text text-white text-[10px] font-bold uppercase tracking-widest disabled:opacity-50"
+                          >
+                            {isUpdatingSecure ? 'Кэширование...' : 'Запустить полное кэширование'}
+                          </button>
+                          <span className="text-[10px] text-gray-500 italic">Скачивает все статьи из BookStack для быстрого AI-поиска</span>
+                        </div>
+                      </div>
+                    )}
+                    <div className="md:col-span-2 space-y-2">
+                      <label className="text-[10px] font-bold uppercase tracking-widest text-[#8E8E8A]">Управление паролем администратора</label>
+                      <div className="relative flex items-center">
+                        <input 
+                          type="password" 
+                          placeholder="Введите ADMIN_PASSWORD для редактирования ключей и почты"
+                          className="w-full px-4 py-3 bg-[#F5F5F3] border-b-2 border-editorial-text focus:bg-white outline-none transition-all text-sm"
+                          value={adminPassword}
+                          onChange={(e) => setAdminPassword(e.target.value)}
+                          onKeyDown={(e) => e.key === 'Enter' && setIsUnlocked(true)}
+                        />
+                        <button 
+                          onClick={() => setIsUnlocked(true)}
+                          disabled={!adminPassword}
+                          className="absolute right-0 h-full px-6 bg-editorial-text text-white text-[10px] font-bold uppercase tracking-widest disabled:opacity-50"
+                        >
+                          Разблокировать
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  {secureMessage && (
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-red-600 mt-2">{secureMessage}</p>
+                  )}
+                </div>
+              )}
+
+              {isUnlocked && (
+                <motion.div 
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="space-y-6 md:col-span-2 pt-4 border-t-2 border-editorial-text"
+                >
+                  <div className="flex justify-between items-center">
+                    <h3 className="text-sm font-serif italic text-gray-800">Редактирование защищенных параметров</h3>
+                    <button onClick={() => setIsUnlocked(false)} className="text-[10px] font-bold uppercase tracking-widest text-red-600 hover:underline">Закрыть</button>
+                  </div>
+
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-bold uppercase tracking-widest text-[#8E8E8A]">Gemini API Key (Оставьте пустым, если не меняете)</label>
+                      <input 
+                        type="password" 
+                        placeholder="AIzaSy..."
+                        className="w-full px-4 py-3 bg-[#F5F5F3] border-b-2 border-editorial-text focus:bg-white outline-none transition-all text-sm font-mono"
+                        value={tempGeminiKey}
+                        onChange={(e) => setTempGeminiKey(e.target.value)}
+                      />
+                    </div>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-gray-100">
+                      <h4 className="md:col-span-2 text-[10px] font-bold uppercase tracking-widest text-[#8E8E8A]">BookStack</h4>
+                      <div className="md:col-span-2 space-y-2">
+                        <label className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Base URL</label>
+                        <input 
+                          type="text" 
+                          className="w-full px-4 py-3 bg-[#F5F5F3] border-b-2 border-editorial-text focus:bg-white outline-none text-sm"
+                          value={credentials.baseUrl}
+                          onChange={(e) => setCredentials({ ...credentials, baseUrl: e.target.value })}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Token ID</label>
+                        <input 
+                          type="text" 
+                          className="w-full px-4 py-3 bg-[#F5F5F3] border-b-2 border-editorial-text focus:bg-white outline-none text-sm font-mono"
+                          value={credentials.tokenId === 'SERVER_MANAGED' ? '' : credentials.tokenId}
+                          onChange={(e) => setCredentials({ ...credentials, tokenId: e.target.value })}
+                          placeholder={credentials.tokenId === 'SERVER_MANAGED' ? 'Задано в .env' : ''}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Token Secret</label>
+                        <input 
+                          type="password" 
+                          className="w-full px-4 py-3 bg-[#F5F5F3] border-b-2 border-editorial-text focus:bg-white outline-none text-sm font-mono"
+                          value={credentials.tokenSecret === 'SERVER_MANAGED' ? '' : credentials.tokenSecret}
+                          onChange={(e) => setCredentials({ ...credentials, tokenSecret: e.target.value })}
+                          placeholder={credentials.tokenSecret === 'SERVER_MANAGED' ? 'Задано в .env' : '••••••••'}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-gray-100">
+                      <h4 className="md:col-span-2 text-[10px] font-bold uppercase tracking-widest text-[#8E8E8A]">Omnidesk</h4>
+                      <div className="md:col-span-2 space-y-2">
+                        <label className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Поддомен</label>
+                        <input 
+                          type="text" 
+                          className="w-full px-4 py-3 bg-[#F5F5F3] border-b-2 border-editorial-text focus:bg-white outline-none text-sm font-mono"
+                          value={omnideskCreds.domain}
+                          onChange={(e) => setOmnideskCreds({ ...omnideskCreds, domain: e.target.value })}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Email сотрудника</label>
+                        <input 
+                          type="text" 
+                          className="w-full px-4 py-3 bg-[#F5F5F3] border-b-2 border-editorial-text focus:bg-white outline-none text-sm font-mono"
+                          value={omnideskCreds.email === 'SERVER_MANAGED' ? '' : omnideskCreds.email}
+                          onChange={(e) => setOmnideskCreds({ ...omnideskCreds, email: e.target.value })}
+                          placeholder={omnideskCreds.email === 'SERVER_MANAGED' ? 'Задано в .env' : ''}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-bold uppercase tracking-widest text-gray-400">API Key</label>
+                        <input 
+                          type="password" 
+                          className="w-full px-4 py-3 bg-[#F5F5F3] border-b-2 border-editorial-text focus:bg-white outline-none text-sm font-mono"
+                          value={omnideskCreds.apiKey === 'SERVER_MANAGED' ? '' : omnideskCreds.apiKey}
+                          onChange={(e) => setOmnideskCreds({ ...omnideskCreds, apiKey: e.target.value })}
+                          placeholder={omnideskCreds.apiKey === 'SERVER_MANAGED' ? 'Задано в .env' : '••••••••'}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <button 
+                    onClick={handleUpdateSecureSettings}
+                    disabled={isUpdatingSecure || !adminPassword}
+                    className="w-full py-4 bg-editorial-text text-white text-[10px] font-bold uppercase tracking-widest hover:bg-black transition-all disabled:opacity-50"
+                  >
+                    {isUpdatingSecure ? <Loader2 size={16} className="animate-spin mx-auto" /> : 'Применить и сохранить все ключи'}
+                  </button>
+                  
+                  {secureMessage && (
+                    <p className={`text-[10px] font-bold uppercase tracking-widest text-center ${secureMessage.includes('ошибка') ? 'text-red-500' : 'text-green-600'}`}>
+                      {secureMessage}
+                    </p>
+                  )}
+                </motion.div>
+              )}
             </div>
-            <button 
-              onClick={loadBooks}
-              className="w-full py-4 bg-editorial-text text-white text-xs uppercase tracking-widest font-bold hover:bg-[#333] transition-colors flex items-center justify-center gap-2"
-            >
-              {isLoadingBooks ? <Loader2 size={16} className="animate-spin" /> : <ClipboardList size={16} />}
-              Проверить и Сохранить
-            </button>
+
+            <div className="flex flex-col gap-3">
+              <button 
+                onClick={loadBooks}
+                className="w-full py-4 bg-editorial-text text-white text-xs uppercase tracking-widest font-bold hover:bg-[#333] transition-colors flex items-center justify-center gap-2"
+              >
+                {isLoadingBooks ? <Loader2 size={16} className="animate-spin" /> : <ClipboardList size={16} />}
+                Проверить подключение и загрузить иерархию книг
+              </button>
+              
+              <button 
+                onClick={onSave}
+                className="w-full py-4 bg-black text-white text-[10px] uppercase tracking-widest font-bold hover:bg-gray-800 transition-colors flex items-center justify-center gap-2"
+              >
+                Сохранить настройки
+              </button>
+            </div>
           </div>
         </motion.div>
       )}

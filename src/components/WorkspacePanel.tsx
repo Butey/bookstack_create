@@ -5,8 +5,8 @@ import { ProgressBar } from './ProgressBar';
 import { AnimatePresence } from 'motion/react';
 
 interface WorkspacePanelProps {
-  sources: { name: string; content: string; selected?: boolean }[];
-  setSources: React.Dispatch<React.SetStateAction<{ name: string; content: string; selected?: boolean }[]>>;
+  sources: { name: string; content: string; selected?: boolean; attachments?: any[] }[];
+  setSources: React.Dispatch<React.SetStateAction<{ name: string; content: string; selected?: boolean; attachments?: any[] }[]>>;
   processFiles: (files: File[]) => Promise<void>;
   isDragging: boolean;
   setIsDragging: (val: boolean) => void;

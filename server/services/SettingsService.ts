@@ -17,6 +17,17 @@ export class SettingsService {
   public updateSettings(updates: any): void {
     const settingsPath = this.getSettingsPath();
     const current = this.getSettings();
-    fs.writeFileSync(settingsPath, JSON.stringify({ ...current, ...updates }, null, 2), 'utf8');
+    
+    // Deep merge to avoid overwriting nested properties
+    const merged = { ...current };
+    for (const key of Object.keys(updates)) {
+      if (typeof updates[key] === 'object' && updates[key] !== null && !Array.isArray(updates[key])) {
+        merged[key] = { ...(merged[key] || {}), ...updates[key] };
+      } else {
+        merged[key] = updates[key];
+      }
+    }
+    
+    fs.writeFileSync(settingsPath, JSON.stringify(merged, null, 2), 'utf8');
   }
 }
