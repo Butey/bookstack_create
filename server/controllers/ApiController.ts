@@ -66,6 +66,15 @@ export class ApiController {
   public getSettings = (req: Request, res: Response): void => {
     try {
       const settings = this.settingsService.getSettings();
+      // Masking sensitive Data
+      if (settings.geminiApiKey) settings.geminiApiKey = 'SERVER_MANAGED';
+      if (settings.bookstack) {
+        if (settings.bookstack.tokenId) settings.bookstack.tokenId = 'SERVER_MANAGED';
+        if (settings.bookstack.tokenSecret) settings.bookstack.tokenSecret = 'SERVER_MANAGED';
+      }
+      if (settings.omnidesk) {
+        if (settings.omnidesk.apiKey) settings.omnidesk.apiKey = 'SERVER_MANAGED';
+      }
       res.json(settings);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -266,10 +275,23 @@ export class ApiController {
     }
 
     try {
+      const currentSettings = this.settingsService.getSettings();
       const updates: any = {};
-      if (geminiApiKey !== undefined) updates.geminiApiKey = geminiApiKey;
-      if (bookstack) updates.bookstack = bookstack;
-      if (omnidesk) updates.omnidesk = omnidesk;
+      if (geminiApiKey !== undefined && geminiApiKey !== 'SERVER_MANAGED') updates.geminiApiKey = geminiApiKey;
+      
+      if (bookstack) {
+        updates.bookstack = { ...currentSettings.bookstack };
+        if (bookstack.baseUrl !== undefined) updates.bookstack.baseUrl = bookstack.baseUrl;
+        if (bookstack.tokenId !== undefined && bookstack.tokenId !== 'SERVER_MANAGED') updates.bookstack.tokenId = bookstack.tokenId;
+        if (bookstack.tokenSecret !== undefined && bookstack.tokenSecret !== 'SERVER_MANAGED') updates.bookstack.tokenSecret = bookstack.tokenSecret;
+      }
+      
+      if (omnidesk) {
+        updates.omnidesk = { ...currentSettings.omnidesk };
+        if (omnidesk.domain !== undefined) updates.omnidesk.domain = omnidesk.domain;
+        if (omnidesk.email !== undefined && omnidesk.email !== 'SERVER_MANAGED') updates.omnidesk.email = omnidesk.email;
+        if (omnidesk.apiKey !== undefined && omnidesk.apiKey !== 'SERVER_MANAGED') updates.omnidesk.apiKey = omnidesk.apiKey;
+      }
 
       this.settingsService.updateSettings(updates);
       return Promise.resolve(res.json({ success: true }));

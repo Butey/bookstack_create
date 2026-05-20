@@ -53,40 +53,57 @@ export default function App() {
   } | null>(null);
 
   useEffect(() => {
-    fetch('/api/config').then(r => r.json()).then(data => {
-      setServerConfig(data);
-      if (data.bookstack.hasEnv) {
-        setCredentials(prev => ({
-          ...prev,
-          baseUrl: data.bookstack.envBaseUrl || prev.baseUrl,
+    Promise.all([
+      fetch('/api/config').then(r => r.json()),
+      fetch('/api/settings').then(r => r.json())
+    ]).then(([configData, settingsData]) => {
+      setServerConfig(configData);
+
+      let bookstackCredsToSet = { baseUrl: '', tokenId: '', tokenSecret: '' };
+      if (settingsData.bookstack_creds || settingsData.bookstack) {
+        bookstackCredsToSet = { ...bookstackCredsToSet, ...(settingsData.bookstack_creds || settingsData.bookstack) };
+      }
+      if (configData.bookstack?.hasEnv) {
+        bookstackCredsToSet = {
+          ...bookstackCredsToSet,
+          baseUrl: configData.bookstack.envBaseUrl || bookstackCredsToSet.baseUrl,
           tokenId: 'SERVER_MANAGED',
           tokenSecret: 'SERVER_MANAGED'
-        }));
-      } else {
-        setCredentials(prev => {
-          if (prev.tokenId === 'SERVER_MANAGED' || prev.tokenSecret === 'SERVER_MANAGED') {
-            return { ...prev, tokenId: '', tokenSecret: '' };
-          }
-          return prev;
-        });
+        };
       }
-      
-      if (data.omnidesk.hasEnv) {
-        setOmnideskCreds(prev => ({
-          ...prev,
-          domain: data.omnidesk.envDomain || prev.domain,
+      setCredentials(bookstackCredsToSet);
+
+      let omnideskCredsToSet = { domain: '', email: '', apiKey: '' };
+      if (settingsData.omnidesk_creds || settingsData.omnidesk) {
+        omnideskCredsToSet = { ...omnideskCredsToSet, ...(settingsData.omnidesk_creds || settingsData.omnidesk) };
+      }
+      if (configData.omnidesk?.hasEnv) {
+        omnideskCredsToSet = {
+          ...omnideskCredsToSet,
+          domain: configData.omnidesk.envDomain || omnideskCredsToSet.domain,
           email: 'SERVER_MANAGED',
           apiKey: 'SERVER_MANAGED'
-        }));
-      } else {
-        setOmnideskCreds(prev => {
-          if (prev.email === 'SERVER_MANAGED' || prev.apiKey === 'SERVER_MANAGED') {
-            return { ...prev, email: '', apiKey: '' };
-          }
-          return prev;
-        });
+        };
       }
-    }).catch(console.error);
+      setOmnideskCreds(omnideskCredsToSet);
+
+      if (settingsData.bookstack_sources) setSources(settingsData.bookstack_sources);
+      if (settingsData.agent_work_mode) setWorkMode(settingsData.agent_work_mode);
+      if (settingsData.agent_data_structure) setDataStructure(settingsData.agent_data_structure);
+      if (settingsData.agent_system_instruction) setSystemInstruction(settingsData.agent_system_instruction);
+      if (settingsData.agent_search_prompt) setSearchPrompt(settingsData.agent_search_prompt);
+      if (settingsData.agent_duplicate_prompt) setDuplicatePrompt(settingsData.agent_duplicate_prompt);
+      if (settingsData.agent_context_prompt) setContextPrompt(settingsData.agent_context_prompt);
+      if (settingsData.agent_gemini_model) {
+        const validIds = GEMINI_MODELS.map(m => m.id) as string[];
+        setGeminiModel(validIds.includes(settingsData.agent_gemini_model) ? settingsData.agent_gemini_model : DEFAULT_MODEL);
+      }
+      
+      setIsSettingsLoaded(true);
+    }).catch(err => {
+      console.error(err);
+      setIsSettingsLoaded(true);
+    });
   }, []);
 
   const {
@@ -173,30 +190,7 @@ export default function App() {
     }
   }, [credentials.baseUrl, credentials.tokenId, loadBooks]);
 
-  useEffect(() => {
-    fetch('/api/settings').then(res => res.json()).then(data => {
-      if (data.bookstack_sources) setSources(data.bookstack_sources);
-      if (data.agent_work_mode) setWorkMode(data.agent_work_mode);
-      if (data.agent_data_structure) setDataStructure(data.agent_data_structure);
-      if (data.agent_system_instruction) setSystemInstruction(data.agent_system_instruction);
-      if (data.agent_search_prompt) setSearchPrompt(data.agent_search_prompt);
-      if (data.agent_duplicate_prompt) setDuplicatePrompt(data.agent_duplicate_prompt);
-      if (data.agent_context_prompt) setContextPrompt(data.agent_context_prompt);
-      if (data.agent_gemini_model) {
-        const validIds = GEMINI_MODELS.map(m => m.id) as string[];
-        setGeminiModel(validIds.includes(data.agent_gemini_model) ? data.agent_gemini_model : DEFAULT_MODEL);
-      }
-      if (data.bookstack_creds) {
-        // Only set creds if they are not already managed by env, or ensure serverConfig override runs
-        setCredentials(data.bookstack_creds);
-      }
-      if (data.omnidesk_creds) setOmnideskCreds(data.omnidesk_creds);
-      setIsSettingsLoaded(true);
-    }).catch(err => {
-      console.error(err);
-      setIsSettingsLoaded(true); // Proceed even on error
-    });
-  }, []);
+
 
   useEffect(() => {
     if (!isSettingsLoaded) return;
