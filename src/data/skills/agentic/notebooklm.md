@@ -1,0 +1,1 @@
+---\nid: notebooklm\nname: NotebookLM Key Insights (Инсайты}\ndescription: Добавляет в конец статьи специальный раздел с ключевыми концептами, терминами и саммари а-ля NotebookLM.\nbadge: Аналитика\nicon: Brain\n---\n\n# NotebookLM Key Insights (Инсайты}\n\nДобавляет в конец статьи специальный раздел с ключевыми концептами, терминами и саммари а-ля NotebookLM.\n

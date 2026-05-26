@@ -1,0 +1,1 @@
+---\nid: chat-widget\nname: Chat Widget\ndescription: Генерация спецификации встраиваемого виджета чата.\nbadge: Код\nicon: Terminal\n---\n\n# Chat Widget\n\nГенерация спецификации встраиваемого виджета чата.\n

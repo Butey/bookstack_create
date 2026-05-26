@@ -167,6 +167,33 @@ export class ApiController {
     }
   };
 
+  public generateArticle = async (req: Request, res: Response): Promise<any> => {
+    const settings = this.settingsService.getSettings();
+    const apiKey = settings.geminiApiKey || process.env.GEMINI_API_KEY;
+    if (!apiKey) return res.status(500).json({ error: 'GEMINI_API_KEY not configured on server' });
+    
+    const { sources, goal, targetMode, availableContext, model, existingContent, systemInstruction, dataStructure, attachments } = req.body;
+    
+    try {
+      const result = await this.geminiService.generateArticle(
+        apiKey,
+        sources || '',
+        goal || 'Составьте краткий обзор и организуйте данные в профессиональное руководство.',
+        targetMode || 'create',
+        availableContext,
+        model || 'gemini-3.5-flash',
+        existingContent || '',
+        systemInstruction || '',
+        dataStructure || '',
+        attachments
+      );
+      res.json(result);
+    } catch (error: any) {
+      console.error('[Article Generation Error]', error?.message || error);
+      res.status(500).json({ error: error?.message || 'Не удалось сгенерировать статью' });
+    }
+  };
+
   public proxyBookStack = async (req: Request, res: Response): Promise<any> => {
     const { method, url, data, credentials } = req.body;
     const settings = this.settingsService.getSettings();

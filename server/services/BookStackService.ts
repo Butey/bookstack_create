@@ -32,6 +32,7 @@ export class BookStackService {
         ...(isGet === false && { 'Content-Type': 'application/json' })
       },
       httpsAgent: this.httpsAgent,
+      timeout: 60000, // Increased to 60 seconds to prevent 500 error on slow/large requests like count=200
       ...(data && { data })
     });
     

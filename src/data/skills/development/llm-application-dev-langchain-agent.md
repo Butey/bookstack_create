@@ -1,0 +1,1 @@
+---\nid: llm-application-dev-langchain-agent\nname: LangChain Agent\ndescription: Разработка агента на базе экосистемы LangChain.\nbadge: Код\nicon: Box\n---\n\n# LangChain Agent\n\nРазработка агента на базе экосистемы LangChain.\n

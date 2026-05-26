@@ -12,7 +12,8 @@ export function useFileUpload(
     checkPauseAndAbort: () => Promise<void>;
     startTask: (steps: { step: number; total: number; label: string }) => void;
     setSyncStatus: React.Dispatch<React.SetStateAction<{ type: "success" | "error" | "idle"; message: string; url?: string | undefined; }>>;
-  }
+  },
+  activeSkills: Record<string, boolean>
 ) {
   const [uploadProgress, setUploadProgress] = useState<{ percent: number, label: string } | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -61,7 +62,8 @@ export function useFileUpload(
         
         const extractedText = await extractTextFromFile(base64Str, mimeType, geminiModel, {
           signal: executionControl.abortControllerRef.current?.signal,
-          checkPause: executionControl.checkPauseAndAbort
+          checkPause: executionControl.checkPauseAndAbort,
+          activeSkills
         });
         
         const attachList = [];
@@ -92,7 +94,7 @@ export function useFileUpload(
     }
     
     setTimeout(() => setUploadProgress(null), 1000);
-  }, [geminiModel, setSources, executionControl]);
+  }, [geminiModel, setSources, executionControl, activeSkills]);
 
   const handleSpecialFileUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>, target: 'system' | 'structure') => {
     const file = e.target.files?.[0];
@@ -128,7 +130,8 @@ export function useFileUpload(
       
       const text = await extractTextFromFile(base64Str, mimeType, geminiModel, {
         signal: executionControl.abortControllerRef.current?.signal,
-        checkPause: executionControl.checkPauseAndAbort
+        checkPause: executionControl.checkPauseAndAbort,
+        activeSkills
       });
 
       if (target === 'system') {
@@ -145,7 +148,7 @@ export function useFileUpload(
       setUploadProgress(null);
       e.target.value = '';
     }
-  }, [geminiModel, setSystemInstruction, setDataStructure, executionControl]);
+  }, [geminiModel, setSystemInstruction, setDataStructure, executionControl, activeSkills]);
 
   return {
     uploadProgress,

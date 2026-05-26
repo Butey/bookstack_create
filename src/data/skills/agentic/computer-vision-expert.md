@@ -1,0 +1,1 @@
+---\nid: computer-vision-expert\nname: Computer-Vision (Анализ скриншотов)\ndescription: Gemini извлекает OCR-текст, ошибки и схемы из приложенных графических файлов и интегрирует их в статью.\nbadge: Зрение\nicon: Eye\n---\n\n# Computer-Vision (Анализ скриншотов)\n\nGemini извлекает OCR-текст, ошибки и схемы из приложенных графических файлов и интегрирует их в статью.\n

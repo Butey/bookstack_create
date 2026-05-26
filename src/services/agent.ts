@@ -1,25 +1,32 @@
 import { BookStackCredentials } from '../types';
 import { callGemini, extractJson, GeminiModelId, DEFAULT_MODEL } from './gemini';
+import { searchPages, searchVectorStore, fetchPage } from './api';
 
-export async function agenticRagWorkflow(
-  sources: string,
+// Safe replacement helper to avoid JS string.replace regex-substitutions issues (like $&, $1, etc.)
+function safeReplace(str: string, search: string, replacement: string): string {
+  if (!str) return '';
+  return str.split(search).join(replacement);
+}
+
+/**
+ * Generates narrow search queries based on the user's goal and sources.
+ */
+async function generateSearchQueries(
   goal: string,
-  credentials: BookStackCredentials,
-  model: GeminiModelId = DEFAULT_MODEL,
-  onProgress?: (msg: string) => void,
-  options?: { signal?: AbortSignal, checkPause?: () => Promise<void>, searchPrompt?: string, duplicatePrompt?: string, contextPrompt?: string }
-) {
-  onProgress?.('Агент запускает RAG-флоу: переформулирование запроса');
-  
-  // step 1: Query generation
-  let defaultQueryPrompt = `Основываясь на задаче: "${goal}" и кратком содержании источников:\n\n${sources.substring(0, 1500)}\n\nТвоя задача — сгенерировать 5 узких поисковых запросов для поиска существующих статей-дублей в wiki-базе (BookStack).\nНам нужно найти статьи ИМЕННО ОБ ЭТОМ процессе, или ИМЕННО ОБ ЭТОЙ ошибке, а не просто смежные материалы.\nСформулируй запросы по правилам:\n1-2. Точное название конкретного модуля, функции или кода ошибки (самое специфичное).\n3. Главное действие, которое описывает материал.\n4-5. Уникальные термины, аббревиатуры или идентификаторы из текста.\n\nЗАПРОСЫ ДОЛЖНЫ БЫТЬ УЗКИМИ И КОРОТКИМИ (1-3 слова). Возвращай СТРОГО JSON массив строк, например: ["vpn error 504", "setup mikrotik ipsec", "payment gateway"].`;
-  
+  sources: string,
+  model: GeminiModelId,
+  options?: { signal?: AbortSignal; checkPause?: () => Promise<void>; searchPrompt?: string }
+): Promise<string[]> {
+  const defaultQueryPrompt = `Основываясь на задаче: "{goal}" и кратком содержании источников:\n\n{sources}\n\nТвоя задача — сгенерировать 5 узких поисковых запросов для поиска существующих статей-дублей в wiki-базе (BookStack).\nНам нужно найти статьи ИМЕННО ОБ ЭТОМ процессе, или ИМЕННО ОБ ЭТОЙ ошибке, а не просто смежные материалы.\nСформулируй запросы по правилам:\n1-2. Точное название конкретного модуля, функции или кода ошибки (самое специфичное).\n3. Главное действие, которое описывает материал.\n4-5. Уникальные термины, аббревиатуры или идентификаторы из текста.\n\nЗАПРОСЫ ДОЛЖНЫ БЫТЬ УЗКИМИ И КОРОТКИМИ (1-3 слова). Возвращай СТРОГО JSON массив строк, например: ["vpn error 504", "setup mikrotik ipsec", "payment gateway"].`;
+
   let queryPrompt = options?.searchPrompt 
-    ? options.searchPrompt.replace('{goal}', goal).replace('{sources}', sources.substring(0, 1500))
+    ? options.searchPrompt
     : defaultQueryPrompt;
 
-  
-  let queries: string[];
+  queryPrompt = safeReplace(queryPrompt, '{goal}', goal);
+  queryPrompt = safeReplace(queryPrompt, '{sources}', sources.substring(0, 1500));
+
+  let queries: string[] = [];
   try {
     const qResp = await callGemini(model, [{ role: 'user', parts: [{ text: queryPrompt }] }], {
       responseMimeType: 'application/json',
@@ -30,39 +37,47 @@ export async function agenticRagWorkflow(
       signal: options?.signal, 
       checkPause: options?.checkPause 
     });
-    queries = extractJson(qResp);
-    if (!Array.isArray(queries)) queries = [queries];
-    if (queries.length === 0) queries = [goal.split(' ')[0] || goal.substring(0, 10)];
-  } catch(e) {
+    const parsed = extractJson(qResp);
+    queries = Array.isArray(parsed) ? parsed : [parsed];
+  } catch (e) {
+    console.error('[Agent] Query generation failed. Falling back to key terms.', e);
     const rawWords = goal.replace(/[^\w\а-яА-ЯёЁ\s]/g, '').split(/\s+/).filter(w => w.length > 3);
     queries = rawWords.slice(0, 2);
-    if (queries.length === 0) queries = [goal.substring(0, 10)];
   }
 
-  // Also manually add the most frequent long word from goal as fallback
+  // Ensure fallback words from goal
   const fallbackTerms = goal.replace(/[^\w\а-яА-ЯёЁ\s]/g, '').split(/\s+/).filter(w => w.length > 4);
-  if (fallbackTerms.length > 0) queries.push(fallbackTerms[0]);
+  if (fallbackTerms.length > 0) {
+    queries.push(fallbackTerms[0]);
+  }
 
-  // Clean and unique queries
-  queries = [...new Set(queries.map(q => q.trim()).filter(q => q.length > 2))];
+  return [...new Set(queries.map(q => q.trim()).filter(q => q.length > 2))];
+}
 
-  onProgress?.(`Агент осуществляет семантический поиск в BookStack по запросам: ${queries.join(', ')}...`);
-  const { searchPages, searchVectorStore, fetchPage } = await import('./api');
-  let retrievedPages: any[] = [];
-  let fetchedIds = new Set();
-  
-  // Also search vector store
+/**
+ * Searches for relevant documents via vector indexing and standard keywords.
+ */
+async function searchRelevantPages(
+  queries: string[],
+  goal: string,
+  credentials: BookStackCredentials,
+  options?: { signal?: AbortSignal; checkPause?: () => Promise<void> }
+): Promise<{ retrievedPages: any[]; fetchedIds: Set<number> }> {
+  const retrievedPages: any[] = [];
+  const fetchedIds = new Set<number>();
+
+  // 1. Vector store search
   try {
     const vectorResults = await searchVectorStore(goal, 3);
     for (const vRes of vectorResults) {
       if (vRes.id && vRes.id.startsWith('bookstack:page:')) {
         const pageId = parseInt(vRes.id.replace('bookstack:page:', ''), 10);
-        if (!fetchedIds.has(pageId)) {
+        if (!isNaN(pageId) && !fetchedIds.has(pageId)) {
           fetchedIds.add(pageId);
           retrievedPages.push({
             id: pageId,
             name: vRes.metadata?.name || 'Найденная через векторный поиск статья',
-            snippet: vRes.text.substring(0, 4000), // increased length
+            snippet: vRes.text.substring(0, 4000),
             book_id: vRes.metadata?.book_id,
             url: vRes.metadata?.url
           });
@@ -70,70 +85,117 @@ export async function agenticRagWorkflow(
       }
     }
   } catch (e) {
-    console.error('Vector store search failed', e);
+    console.error('[Agent] Vector store search failed:', e);
   }
 
-  for (const q of queries.slice(0, 3)) { // reduced to 3 keywords to save time
-    if (options?.checkPause) await options.checkPause();
-    try {
-      const results = await searchPages(credentials, `${q} {type:page}`);
-      const items = Array.isArray(results) ? results : (results?.data || []);
-      for (const res of items.slice(0, 3)) { // reduced to 3 pages per query
-        if (!fetchedIds.has(res.id) && res.type === 'page') {
-          fetchedIds.add(res.id);
-          
-          let fullSnippet = '';
-          try {
-             // Fetch full page to get better context
-            const fullPage = await fetchPage(credentials, res.id);
-            const text = fullPage.markdown || fullPage.html || fullPage.raw_html || '';
-            fullSnippet = text.substring(0, 4000);
-          } catch(err) {
-            const snippetObj = res.preview_html || res.preview_text;
-            fullSnippet = (typeof snippetObj === 'object' && snippetObj !== null) ? (snippetObj.content || snippetObj.text || JSON.stringify(snippetObj)) : (snippetObj || '');
-          }
+  // 2. Keyword Search in Parallel across up to 3 queries
+  try {
+    const searchPromises = queries.slice(0, 3).map(async (q) => {
+      if (options?.checkPause) await options.checkPause();
+      try {
+        const results = await searchPages(credentials, `${q} {type:page}`);
+        return Array.isArray(results) ? results : (results?.data || []);
+      } catch (e) {
+        console.error(`[Agent] Search error for query "${q}":`, e);
+        return [];
+      }
+    });
 
-          retrievedPages.push({ id: res.id, name: res.name, snippet: fullSnippet, book_id: res.book_id, url: res.url });
+    const searchResultsLists = await Promise.all(searchPromises);
+    const itemsToFetch: any[] = [];
+
+    for (const results of searchResultsLists) {
+      for (const res of results.slice(0, 3)) {
+        const pageId = typeof res.id === 'string' ? parseInt(res.id, 10) : res.id;
+        if (!isNaN(pageId) && !fetchedIds.has(pageId) && res.type === 'page') {
+          fetchedIds.add(pageId);
+          itemsToFetch.push({ ...res, id: pageId });
         }
       }
-    } catch (e) {
-      console.error(e);
     }
+
+    // 3. Parallel full content fetching for optimal context analysis
+    if (itemsToFetch.length > 0) {
+      const fetchPromises = itemsToFetch.map(async (res) => {
+        if (options?.checkPause) await options.checkPause();
+        let fullSnippet = '';
+        try {
+          const fullPage = await fetchPage(credentials, res.id);
+          const text = fullPage.markdown || fullPage.html || fullPage.raw_html || '';
+          fullSnippet = text.substring(0, 4000);
+        } catch (err) {
+          console.error(`[Agent] Failed to fetch page content for page ID ${res.id}`, err);
+          const snippetObj = res.preview_html || res.preview_text;
+          fullSnippet = (typeof snippetObj === 'object' && snippetObj !== null)
+            ? (snippetObj.content || snippetObj.text || JSON.stringify(snippetObj))
+            : (snippetObj || '');
+        }
+        return { id: res.id, name: res.name, snippet: fullSnippet, book_id: res.book_id, url: res.url };
+      });
+
+      const resolvedPages = await Promise.all(fetchPromises);
+      retrievedPages.push(...resolvedPages);
+    }
+  } catch (searchErr) {
+    console.error('[Agent] Parallel keyword search or fetching failed', searchErr);
   }
+
+  return { retrievedPages, fetchedIds };
+}
+
+export async function agenticRagWorkflow(
+  sources: string,
+  goal: string,
+  credentials: BookStackCredentials,
+  model: GeminiModelId = DEFAULT_MODEL,
+  onProgress?: (msg: string) => void,
+  options?: { signal?: AbortSignal, checkPause?: () => Promise<void>, searchPrompt?: string, duplicatePrompt?: string, contextPrompt?: string }
+) {
+  onProgress?.('Агент запускает RAG-флоу: генерация поисковых запросов...');
+  
+  // Step 1: Query generation
+  const queries = await generateSearchQueries(goal, sources, model, {
+    signal: options?.signal,
+    checkPause: options?.checkPause,
+    searchPrompt: options?.searchPrompt
+  });
+
+  onProgress?.(`Агент осуществляет семантический и ключевой поиск в BookStack по запросам: ${queries.join(', ')}...`);
+  
+  // Step 2: Parallel search & fetching
+  const { retrievedPages } = await searchRelevantPages(queries, goal, credentials, {
+    signal: options?.signal,
+    checkPause: options?.checkPause
+  });
 
   if (retrievedPages.length === 0) {
     onProgress?.('Релевантные статьи не найдены. Агент рекомендует: СОЗДАТЬ');
     return { decision: 'create', retrievedContext: [], relatedPages: [] };
   }
 
-  onProgress?.('Агент проверяет найденные статьи на точные дубли...');
-  const defaultDuplicatePrompt = `
-    Вы — строгий аналитик базы знаний. Цель пользователя: "{goal}".
-    Новый материал: 
-    ---
-    {sources}
-    ---
-    
-    Найденные статьи:
-    {retrievedPages}
-    
-    Оцени каждую статью ТОЛЬКО на предмет того, является ли она ДУБЛЕМ (статьей, которую нужно обновить).
-    ИНСТРУКЦИЯ ПО ОЦЕНКЕ ДУБЛЕЙ:
-    - Статья является дублем ТОЛЬКО если она описывает ИМЕННО ТУ ЖЕ функцию, ТОТ ЖЕ процесс или ТУ ЖЕ инструкцию.
-    - Если сомневаетесь, ставьте isDuplicate: false.
-    
-    Верни СТРОГО JSON: { "evaluatedPages": [{ "id": number, "reason": "почему", "isDuplicate": boolean }] }
-  `;
+  onProgress?.('Агент проверяет найденные статьи на предмет точных дублей...');
+  
+  // Step 3: Duplicate detection
+  const defaultDuplicatePrompt = `Вы — строгий аналитик базы знаний. Цель пользователя: "{goal}".
+Новый материал: 
+---
+{sources}
+---
 
-  let duplicatePromptStr = options?.duplicatePrompt
-    ? options.duplicatePrompt
-        .replace('{goal}', goal)
-        .replace('{sources}', sources.substring(0, 2000))
-        .replace('{retrievedPages}', JSON.stringify(retrievedPages))
-    : defaultDuplicatePrompt
-        .replace('{goal}', goal)
-        .replace('{sources}', sources.substring(0, 2000))
-        .replace('{retrievedPages}', JSON.stringify(retrievedPages));
+Найденные статьи:
+{retrievedPages}
+
+Оцени каждую статью ТОЛЬКО на предмет того, является ли она ДУБЛЕМ (статьей, которую нужно обновить).
+ИНСТРУКЦИЯ ПО ОЦЕНКЕ ДУБЛЕЙ:
+- Статья является дублем ТОЛЬКО если она описывает ИМЕННО ТУ ЖЕ функцию, ТОТ ЖЕ процесс или ТУ ЖЕ инструкцию.
+- Если сомневаетесь, ставьте isDuplicate: false.
+
+Верни СТРОГО JSON: { "evaluatedPages": [{ "id": number, "reason": "почему", "isDuplicate": boolean }] }`;
+
+  let duplicatePromptStr = options?.duplicatePrompt || defaultDuplicatePrompt;
+  duplicatePromptStr = safeReplace(duplicatePromptStr, '{goal}', goal);
+  duplicatePromptStr = safeReplace(duplicatePromptStr, '{sources}', sources.substring(0, 2000));
+  duplicatePromptStr = safeReplace(duplicatePromptStr, '{retrievedPages}', JSON.stringify(retrievedPages));
 
   let duplicateIds: number[] = [];
   try {
@@ -163,41 +225,34 @@ export async function agenticRagWorkflow(
     const dupJson = extractJson(dupResp);
     duplicateIds = (dupJson.evaluatedPages || []).filter((p: any) => p.isDuplicate).map((p: any) => p.id);
   } catch(e) {
-    console.error('Duplicate detection failed', e);
+    console.error('[Agent] Duplicate detection failed', e);
   }
 
   const duplicatePages = retrievedPages.filter(p => duplicateIds.includes(p.id));
-  
-  onProgress?.('Агент ищет полезный контекст среди остальных статей...');
-  
   const remainingPages = retrievedPages.filter(p => !duplicateIds.includes(p.id));
   
-  const defaultContextPrompt = `
-    Вы — аналитик базы знаний. Цель: "{goal}".
-    Новый материал: 
-    ---
-    {sources}
-    ---
-    
-    Оставшиеся статьи (не дубли):
-    {retrievedPages}
-    
-    Оцени каждую статью на полезность как КОНТЕКСТ для написания новой.
-    ИНСТРУКЦИЯ ПО ОЦЕНКЕ КОНТЕКСТА:
-    - Статья полезна, если она описывает общую систему, в которую внедряется инструкция, или содержит связанные термины и архитектуру.
-    
-    Верни СТРОГО JSON: { "evaluatedPages": [{ "id": number, "reason": "почему", "isContext": boolean }] }
-  `;
+  onProgress?.('Агент классифицирует оставшиеся статьи как вспомогательный контекст...');
+  
+  // Step 4: Context classification
+  const defaultContextPrompt = `Вы — аналитик базы знаний. Цель: "{goal}".
+Новый материал: 
+---
+{sources}
+---
 
-  let contextPromptStr = options?.contextPrompt
-    ? options.contextPrompt
-        .replace('{goal}', goal)
-        .replace('{sources}', sources.substring(0, 2000))
-        .replace('{retrievedPages}', JSON.stringify(remainingPages))
-    : defaultContextPrompt
-        .replace('{goal}', goal)
-        .replace('{sources}', sources.substring(0, 2000))
-        .replace('{retrievedPages}', JSON.stringify(remainingPages));
+Оставшиеся статьи (не дубли):
+{retrievedPages}
+
+Оцени каждую статью на полезность как КОНТЕКСТ для написания новой.
+ИНСТРУКЦИЯ ПО ОЦЕНКЕ КОНТЕКСТА:
+- Статья полезна, если она описывает общую систему, в которую внедряется инструкция, или содержит связанные термины и архитектуру.
+
+Верни СТРОГО JSON: { "evaluatedPages": [{ "id": number, "reason": "почему", "isContext": boolean }] }`;
+
+  let contextPromptStr = options?.contextPrompt || defaultContextPrompt;
+  contextPromptStr = safeReplace(contextPromptStr, '{goal}', goal);
+  contextPromptStr = safeReplace(contextPromptStr, '{sources}', sources.substring(0, 2000));
+  contextPromptStr = safeReplace(contextPromptStr, '{retrievedPages}', JSON.stringify(remainingPages));
 
   let contextIds: number[] = [];
   try {
@@ -229,7 +284,7 @@ export async function agenticRagWorkflow(
       contextIds = (ctxJson.evaluatedPages || []).filter((p: any) => p.isContext).map((p: any) => p.id);
     }
   } catch(e) {
-    console.error('Context detection failed', e);
+    console.error('[Agent] Context detection failed', e);
     contextIds = remainingPages.map(p => p.id);
   }
 

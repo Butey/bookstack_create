@@ -1,12 +1,13 @@
 import { motion } from 'motion/react';
-import { FileText, X } from 'lucide-react';
+import { FileText, X, Terminal } from 'lucide-react';
 
 interface PreviewModalProps {
   previewSource: { name: string; content: string };
   setPreviewSource: (v: null) => void;
+  onAnalyzeLogs?: (content: string, name: string) => void;
 }
 
-export function PreviewModal({ previewSource, setPreviewSource }: PreviewModalProps) {
+export function PreviewModal({ previewSource, setPreviewSource, onAnalyzeLogs }: PreviewModalProps) {
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -39,10 +40,20 @@ export function PreviewModal({ previewSource, setPreviewSource }: PreviewModalPr
             {previewSource.content}
           </pre>
         </div>
-        <div className="p-4 bg-gray-50 border-t border-editorial-text flex justify-end">
+        <div className="p-4 bg-gray-50 border-t border-editorial-text flex justify-between items-center gap-2">
+          {onAnalyzeLogs ? (
+            <button
+              onClick={() => onAnalyzeLogs(previewSource.content, previewSource.name)}
+              className="px-4 py-2 bg-white border-2 border-editorial-text text-editorial-text text-[10px] font-bold uppercase tracking-widest hover:bg-neutral-100 hover:text-red-600 transition-all flex items-center gap-2 shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]"
+            >
+              <Terminal size={14} className="text-red-500" />
+              Анализировать как лог
+            </button>
+          ) : <div />}
+          
           <button
             onClick={() => setPreviewSource(null)}
-            className="px-6 py-2 bg-editorial-text text-white text-[10px] font-bold uppercase tracking-widest hover:bg-gray-800 transition-all"
+            className="px-6 py-2 bg-editorial-text text-white text-[10px] font-bold uppercase tracking-widest hover:bg-gray-800 transition-all shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]"
           >
             Закрыть
           </button>

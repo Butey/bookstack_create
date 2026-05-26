@@ -1,0 +1,1 @@
+---\nid: wiki-architect\nname: Wiki Architect\ndescription: Глубокое архитектурное проектирование структуры Wiki (разделы, связи).\nbadge: Код\nicon: Network\n---\n\n# Wiki Architect\n\nГлубокое архитектурное проектирование структуры Wiki (разделы, связи).\n

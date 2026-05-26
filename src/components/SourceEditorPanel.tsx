@@ -1,10 +1,16 @@
 import { ClipboardList } from 'lucide-react';
 import { WorkspacePanel } from './WorkspacePanel';
 import { ConfigurationModal } from './ConfigurationModal';
+import { AgentSkillsPanel } from './AgentSkillsPanel';
 
 import { GeminiModelId } from '../services/gemini';
 
 interface SourceEditorPanelProps {
+  onSaveSettings?: () => void;
+  activeSkills: Record<string, boolean>;
+  setActiveSkills: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
+  defaultActiveSkills: Record<string, boolean>;
+  setDefaultActiveSkills: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
   // Config Modal Props
   isConfigOpen: boolean;
   setIsConfigOpen: (v: boolean) => void;
@@ -46,6 +52,10 @@ interface SourceEditorPanelProps {
   setInstructions: (v: string) => void;
   content: string;
   setContent: (v: string) => void;
+  customPresets: any[];
+  setCustomPresets: React.Dispatch<React.SetStateAction<any[]>>;
+  selectedPreset: string;
+  setSelectedPreset: React.Dispatch<React.SetStateAction<string>>;
 }
 
 export function SourceEditorPanel(props: SourceEditorPanelProps) {
@@ -75,7 +85,12 @@ export function SourceEditorPanel(props: SourceEditorPanelProps) {
         handleSpecialFileUpload={props.handleSpecialFileUpload}
         loadBooks={props.loadBooks}
         isLoadingBooks={props.isLoadingBooks}
-        onSave={() => props.setIsConfigOpen(false)}
+        onSave={() => {
+          if (props.onSaveSettings) {
+            props.onSaveSettings();
+          }
+          props.setIsConfigOpen(false);
+        }}
       />
 
       <div className="flex flex-col gap-6">
@@ -144,6 +159,23 @@ export function SourceEditorPanel(props: SourceEditorPanelProps) {
             Enter для загрузки
           </div>
         </div>
+
+        <AgentSkillsPanel
+          activeSkills={props.activeSkills}
+          setActiveSkills={props.setActiveSkills}
+          defaultActiveSkills={props.defaultActiveSkills}
+          setDefaultActiveSkills={props.setDefaultActiveSkills}
+          systemInstruction={props.systemInstruction}
+          setSystemInstruction={props.setSystemInstruction}
+          dataStructure={props.dataStructure}
+          setDataStructure={props.setDataStructure}
+          geminiModel={props.geminiModel}
+          onSaveSettings={props.onSaveSettings || (() => {})}
+          customPresets={props.customPresets}
+          setCustomPresets={props.setCustomPresets}
+          selectedPreset={props.selectedPreset}
+          setSelectedPreset={props.setSelectedPreset}
+        />
 
         <div className="space-y-2">
           <label className="text-[10px] font-bold uppercase tracking-widest text-[#8E8E8A]">Цель текущей задачи</label>

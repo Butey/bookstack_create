@@ -1,0 +1,1 @@
+---\nid: langchain-architecture\nname: LangChain Arch\ndescription: Архитектурные принципы популярного фреймворка LangChain.\nbadge: Код\nicon: Link\n---\n\n# LangChain Arch\n\nАрхитектурные принципы популярного фреймворка LangChain.\n

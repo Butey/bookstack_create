@@ -1,0 +1,1 @@
+---\nid: hermes-agent\nname: Hermes Agent\ndescription: Высокоскоростной нейронный агент для молниеносной пред-фильтрации сырых данных перед сборкой Markdown.\nbadge: Скорость\nicon: Terminal\n---\n\n# Hermes Agent\n\nВысокоскоростной нейронный агент для молниеносной пред-фильтрации сырых данных перед сборкой Markdown.\n

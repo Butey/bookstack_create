@@ -1,0 +1,1 @@
+---\nid: rag-engineer\nname: RAG Engineer\ndescription: Интеграция лучших практик Retrieval-Augmented Generation.\nbadge: Код\nicon: Layers\n---\n\n# RAG Engineer\n\nИнтеграция лучших практик Retrieval-Augmented Generation.\n

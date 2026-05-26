@@ -1,0 +1,1 @@
+---\nid: parallel-agents\nname: Parallel Agents\ndescription: Управление параллельным исполнением агентов.\nbadge: Код\nicon: Layers\n---\n\n# Parallel Agents\n\nУправление параллельным исполнением агентов.\n

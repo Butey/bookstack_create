@@ -1,0 +1,1 @@
+---\nid: llm-application-dev-ai-assistant\nname: AI Assistant Core\ndescription: Разработка ядра интеллектуального ассистента.\nbadge: Код\nicon: Cpu\n---\n\n# AI Assistant Core\n\nРазработка ядра интеллектуального ассистента.\n

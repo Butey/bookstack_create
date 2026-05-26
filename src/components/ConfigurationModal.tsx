@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { FileText, Terminal, ClipboardList, Brain, Loader2, Download, Upload } from 'lucide-react';
-import { GEMINI_MODELS, GeminiModelId } from '../services/gemini';
+import { FileText, Terminal, ClipboardList, Brain, Loader2, Download, Upload, Database, Wand2, RefreshCw } from 'lucide-react';
+import { GEMINI_MODELS, GeminiModelId, callGemini } from '../services/gemini';
 import { BookStackCredentials, OmnideskCredentials } from '../types';
 
 interface ConfigurationModalProps {
@@ -56,7 +56,68 @@ export function ConfigurationModal({
   const [secureMessage, setSecureMessage] = useState('');
   const [isUpdatingSecure, setIsUpdatingSecure] = useState(false);
 
+  const [isSyncingVector, setIsSyncingVector] = useState(false);
+  const [syncVectorMessage, setSyncVectorMessage] = useState('');
+
   const [tempGeminiKey, setTempGeminiKey] = useState('');
+  
+  const [isOptimizingPrompt, setIsOptimizingPrompt] = useState(false);
+  const [optimizeMessage, setOptimizeMessage] = useState('');
+
+  const handlePromptEngineerOptimize = async () => {
+    setIsOptimizingPrompt(true);
+    setOptimizeMessage('Запуск Prompt Engineer... Анализируем инструкции...');
+    try {
+      const optimizePrompt = `Вы — элитный Prompt Engineer со специализацией на языковых моделях Gemini и Claude.
+Ваша задача — оптимизировать системный промпт и структуру данных для технического ИИ-писателя Bridge.LM.
+
+ТЕКУЩИЙ СИСТЕМНЫЙ ПРОМПТ:
+---
+${systemInstruction}
+---
+
+ТЕКУЩИЙ ШАБЛОН СТРУКТУРЫ ДАННЫХ (Markdown):
+---
+${dataStructure}
+---
+
+Ваша цель: сделайте промпт более технологичным, емким, очистите его от "воды", добавьте строгие негативные ограничения (Negative Constraints) для идеального структурирования и устраните любые тавтологии.
+Обязательно оставьте язык ответов — РУССКИЙ.
+
+Возвращайте СТРОГО JSON следующего формата без Markdown разметки:
+{
+  "optimizedSystemInstruction": "новый усовершенствованный системный промпт со всеми продвинутыми техниками разметки роли",
+  "optimizedDataStructure": "новый отшлифованный шаблон структуры статьи (Markdown)"
+}`;
+
+      const responseText = await callGemini('gemini-3.5-flash', [{ role: 'user', parts: [{ text: optimizePrompt }] }], {
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: "object",
+          properties: {
+            optimizedSystemInstruction: { type: "string" },
+            optimizedDataStructure: { type: "string" }
+          },
+          required: ["optimizedSystemInstruction", "optimizedDataStructure"]
+        }
+      });
+
+      const parsed = JSON.parse(responseText);
+      if (parsed.optimizedSystemInstruction && parsed.optimizedDataStructure) {
+        setSystemInstruction(parsed.optimizedSystemInstruction);
+        setDataStructure(parsed.optimizedDataStructure);
+        setOptimizeMessage('Промпт и структура успешно оптимизированы Агентом!');
+      } else {
+        throw new Error('Некорректный формат ответа от инженера промптов');
+      }
+    } catch (e: any) {
+      console.error(e);
+      setOptimizeMessage(`Ошибка оптимизации: ${e.message || String(e)}`);
+    } finally {
+      setIsOptimizingPrompt(false);
+      setTimeout(() => setOptimizeMessage(''), 5000);
+    }
+  };
 
   const handleUpdateSecureSettings = async () => {
     setIsUpdatingSecure(true);
@@ -164,6 +225,28 @@ export function ConfigurationModal({
                   value={dataStructure}
                   onChange={(e) => setDataStructure(e.target.value)}
                 />
+              </div>
+
+              {/* Prompt Engineer Optimization Trigger */}
+              <div className="flex flex-col items-end gap-2">
+                <button
+                  onClick={handlePromptEngineerOptimize}
+                  disabled={isOptimizingPrompt}
+                  className="flex items-center gap-1.5 cursor-pointer bg-[#F5F5F3] border border-editorial-text px-3 py-2 hover:bg-editorial-accent/10 transition-all font-mono text-[10px] uppercase font-bold disabled:opacity-50"
+                  title="Автоматически оптимизировать текущие промпты с помощью AI"
+                >
+                  {isOptimizingPrompt ? (
+                    <RefreshCw size={12} className="animate-spin text-editorial-text" />
+                  ) : (
+                    <Wand2 size={12} className="text-editorial-text" />
+                  )}
+                  Промпт-Оптимизатор
+                </button>
+                {optimizeMessage && (
+                  <span className={`text-[10px] uppercase font-bold ${optimizeMessage.includes('Ошибка') ? 'text-red-500' : 'text-emerald-600'}`}>
+                    {optimizeMessage}
+                  </span>
+                )}
               </div>
 
               <div className="space-y-2">
@@ -448,6 +531,37 @@ export function ConfigurationModal({
             </div>
 
             <div className="flex flex-col gap-3">
+              {credentials.baseUrl && (
+                <div className="space-y-1">
+                  <button 
+                    onClick={async () => {
+                      const { syncBookstackToVectorStore } = await import('../services/api');
+                      setIsSyncingVector(true);
+                      setSyncVectorMessage('Инициализация индексации... Сканируем BookStack...');
+                      try {
+                        await syncBookstackToVectorStore(credentials, (msg) => setSyncVectorMessage(msg));
+                        setSyncVectorMessage('Успешно: база данных векторов полностью синхронизирована!');
+                      } catch (e: any) {
+                        setSyncVectorMessage('Ошибка индексации: ' + (e.message || String(e)));
+                      } finally {
+                        setIsSyncingVector(false);
+                        setTimeout(() => setSyncVectorMessage(''), 8000);
+                      }
+                    }}
+                    disabled={isSyncingVector}
+                    className="w-full py-4 bg-editorial-accent text-editorial-text border-2 border-editorial-text text-xs uppercase tracking-widest font-bold hover:bg-editorial-accent/80 transition-colors flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                  >
+                    {isSyncingVector ? <Loader2 size={16} className="animate-spin" /> : <Database size={16} />}
+                    {isSyncingVector ? 'Синхронизация знаний...' : 'Реиндексировать Wiki в векторную БД'}
+                  </button>
+                  {syncVectorMessage && (
+                    <p className={`text-[10px] font-bold uppercase tracking-wider text-center py-1 rounded transition-all ${syncVectorMessage.includes('Ошибка') || syncVectorMessage.includes('не удалось') ? 'text-red-500' : 'text-emerald-600'}`}>
+                      {syncVectorMessage}
+                    </p>
+                  )}
+                </div>
+              )}
+
               <button 
                 onClick={loadBooks}
                 className="w-full py-4 bg-editorial-text text-white text-xs uppercase tracking-widest font-bold hover:bg-[#333] transition-colors flex items-center justify-center gap-2"

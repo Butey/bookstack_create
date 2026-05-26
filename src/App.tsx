@@ -17,8 +17,10 @@ import { AppHeader } from './components/AppHeader';
 import { AppFooter } from './components/AppFooter';
 import { PreviewModal } from './components/PreviewModal';
 import { MindmapModal } from './components/MindmapModal';
+import { MermaidModal } from './components/MermaidModal';
 import { RagConfirmationModal } from './components/RagConfirmationModal';
 import { SourceEditorPanel } from './components/SourceEditorPanel';
+import { LogAnalysisModal } from './components/LogAnalysisModal';
 import { KnowledgeSyncPanel } from './components/KnowledgeSyncPanel';
 import { useExecutionControl } from './hooks/useExecutionControl';
 import { useFileUpload } from './hooks/useFileUpload';
@@ -44,6 +46,7 @@ export default function App() {
   } | null>(null);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [mindmapData, setMindmapData] = useState<{ md: string } | null>(null);
+  const [mermaidData, setMermaidData] = useState<{ code: string } | null>(null);
 
   const [credentials, setCredentials] = useState<BookStackCredentials>({ baseUrl: '', tokenId: '', tokenSecret: '' });
   const [omnideskCreds, setOmnideskCreds] = useState<OmnideskCredentials>({ domain: '', email: '', apiKey: '' });
@@ -51,6 +54,33 @@ export default function App() {
     bookstack: { hasEnv: boolean; envBaseUrl: string };
     omnidesk: { hasEnv: boolean; envDomain: string };
   } | null>(null);
+  const [activeSkills, setActiveSkills] = useState<Record<string, boolean>>({
+    'prompt-engineer': false,
+    'mermaid-expert': false,
+    'log-analyzer': true,
+    'analyzing-logs': true,
+  });
+  const [customPresets, setCustomPresets] = useState<any[]>([]);
+  const [selectedPreset, setSelectedPreset] = useState<string>('general-kbae');
+
+  const [defaultActiveSkills, setDefaultActiveSkills] = useState<Record<string, boolean>>(() => {
+    try {
+      const stored = localStorage.getItem('bridge_lm_default_active_skills');
+      if (stored) return JSON.parse(stored);
+    } catch (e) {
+      console.error(e);
+    }
+    return {
+      'prompt-engineer': false,
+      'mermaid-expert': false,
+      'log-analyzer': true,
+      'analyzing-logs': true,
+    };
+  });
+
+  useEffect(() => {
+    localStorage.setItem('bridge_lm_default_active_skills', JSON.stringify(defaultActiveSkills));
+  }, [defaultActiveSkills]);
 
   useEffect(() => {
     Promise.all([
@@ -94,6 +124,10 @@ export default function App() {
       if (settingsData.agent_search_prompt) setSearchPrompt(settingsData.agent_search_prompt);
       if (settingsData.agent_duplicate_prompt) setDuplicatePrompt(settingsData.agent_duplicate_prompt);
       if (settingsData.agent_context_prompt) setContextPrompt(settingsData.agent_context_prompt);
+      if (settingsData.agent_active_skills) setActiveSkills(settingsData.agent_active_skills);
+      if (settingsData.agent_default_active_skills) setDefaultActiveSkills(settingsData.agent_default_active_skills);
+      if (settingsData.agent_custom_presets) setCustomPresets(settingsData.agent_custom_presets);
+      if (settingsData.agent_selected_preset) setSelectedPreset(settingsData.agent_selected_preset);
       if (settingsData.agent_gemini_model) {
         const validIds = GEMINI_MODELS.map(m => m.id) as string[];
         setGeminiModel(validIds.includes(settingsData.agent_gemini_model) ? settingsData.agent_gemini_model : DEFAULT_MODEL);
@@ -130,12 +164,209 @@ export default function App() {
   const [isConfigOpen, setIsConfigOpen] = useState(false);
   const [previewSource, setPreviewSource] = useState<{ name: string; content: string } | null>(null);
 
+  const [logAnalysisResult, setLogAnalysisResult] = useState<string | null>(null);
+  const [logAnalysisName, setLogAnalysisName] = useState<string>('');
+  const [isAnalyzingLogs, setIsAnalyzingLogs] = useState(false);
+
+  const handleAnalyzeLogs = async (sourceContent: string, sourceName: string) => {
+    setIsAnalyzingLogs(true);
+    setLogAnalysisName(sourceName);
+    executionControl.setSyncStatus({ type: 'idle', message: 'Анализ логов DevOps-агентом...' });
+    try {
+      const { analyzeLogsDirectly } = await import('./services/gemini');
+      const result = await analyzeLogsDirectly(sourceContent, sourceName, activeSkills);
+      setLogAnalysisResult(result);
+      setPreviewSource(null); // Close the preview modal to open the analysis report
+      executionControl.setSyncStatus({ type: 'success', message: 'Анализ логов успешно завершен' });
+    } catch (err: any) {
+      console.error(err);
+      executionControl.setSyncStatus({ type: 'error', message: `Ошибка анализа логов: ${err.message || String(err)}` });
+    } finally {
+      setIsAnalyzingLogs(false);
+      setTimeout(() => {
+        executionControl.setSyncStatus({ type: 'idle', message: '' });
+      }, 5000);
+    }
+  };
+
+  const handleInsertLogAnalysisToDraft = (logMd: string) => {
+    if (lastResponse) {
+      setLastResponse({
+        ...lastResponse,
+        markdown: lastResponse.markdown + logMd
+      });
+      executionControl.setSyncStatus({ type: 'success', message: 'Анализ логов добавлен в черновик статьи!' });
+    } else {
+      setContent((prev: string) => prev + logMd);
+      executionControl.setSyncStatus({ type: 'success', message: 'Анализ логов вставлен в текстовое поле!' });
+    }
+  };
+
   const [instructions, setInstructions] = useState('');
-  const [dataStructure, setDataStructure] = useState('1. Краткий обзор (Summary)\n2. Контекст (Context)\n3. Детальное описание (Detailed Analysis)\n4. Выводы (Conclusion)');
-  const [systemInstruction, setSystemInstruction] = useState('Вы — эксперт по техническому письму. Синтезируйте предоставленные источники в понятную и профессиональную статью для базы знаний Wiki.');
-  const [searchPrompt, setSearchPrompt] = useState('Основываясь на задаче: "{goal}" и кратком содержании источников:\n\n{sources}\n\nТвоя задача — сгенерировать 5 узких поисковых запросов для поиска существующих статей-дублей в wiki-базе (BookStack).\nНам нужно найти статьи ИМЕННО ОБ ЭТОМ процессе, или ИМЕННО ОБ ЭТОЙ ошибке, а не просто смежные материалы.\nСформулируй запросы по правилам:\n1-2. Точное название конкретного модуля, функции или кода ошибки (самое специфичное).\n3. Главное действие, которое описывает материал.\n4-5. Уникальные термины, аббревиатуры или идентификаторы из текста.\n\nЗАПРОСЫ ДОЛЖНЫ БЫТЬ УЗКИМИ И КОРОТКИМИ (1-3 слова). Возвращай СТРОГО JSON массив строк, например: ["vpn error 504", "setup mikrotik ipsec", "payment gateway"].');
-  const [duplicatePrompt, setDuplicatePrompt] = useState(`Вы — строгий аналитик базы знаний. Цель пользователя: "{goal}".\nНовый материал: \n---\n{sources}\n---\n\nНайденные статьи:\n{retrievedPages}\n\nОцени каждую статью ТОЛЬКО на предмет того, является ли она ДУБЛЕМ (статьей, которую нужно обновить).\nИНСТРУКЦИЯ ПО ОЦЕНКЕ ДУБЛЕЙ:\n- Статья является дублем ТОЛЬКО если она описывает ИМЕННО ТУ ЖЕ функцию, ТОТ ЖЕ процесс или ТУ ЖЕ инструкцию.\n- Если сомневаетесь, ставьте isDuplicate: false.\n\nВерни СТРОГО JSON: { "evaluatedPages": [{ "id": number, "reason": "почему", "isDuplicate": boolean }] }`);
-  const [contextPrompt, setContextPrompt] = useState(`Вы — аналитик базы знаний. У пользователя есть цель: "{goal}".\nТакже исходный собираемый материал пользователя:\n---\n{sources}\n---\nМы нашли следующие существующие статьи в Wiki:\n{retrievedPages}\nОцени каждую найденную статью на полезность как КОНТЕКСТ для написания новой.\nИНСТРУКЦИЯ ПО ОЦЕНКЕ КОНТЕКСТА:\n- Статья полезна, если она описывает общую систему, в которую внедряется инструкция, или содержит связанные термины и архитектуру.\n\nВерни СТРОГО JSON: { "evaluatedPages": [{ "id": number, "reason": "почему такое решение", "isContext": boolean }] }`);
+  const [dataStructure, setDataStructure] = useState(`Template: Bookstack Knowledge Base Article v3.0
+
+---
+target_book: "[Автоматическое определение]"
+target_chapter: "[Автоматическое определение]"
+tags: [tag1, tag2]
+priority: "[Low/Medium/High/Critical]"
+root_cause_category: "[Category]"
+---
+
+## 1. Метаданные и Экспресс-диагностика
+* **Тип обращения:** [Напр. Инцидент / Сбой отображения]
+* **Симптом:** [Краткое описание того, что видит пользователь]
+* **Статус объекта:** [ПНР / Эксплуатация / Тесты]
+* **Критичность:** [Влияние на бизнес-процессы или доверие клиента]
+
+## 2. Описание проблемы (Context)
+[1-2 абзаца: детальное описание ситуации на основе тикета. Условия возникновения, повторяемость].
+
+## 3. Diagnostic Mapping (Symptom → Cause)
+| Визуальный симптом / Ошибка в логах | Вероятная причина | Обязательные данные для сбора |
+| :--- | :--- | :--- |
+| [Текст ошибки] | [Что это значит] | [Логи, конфиги, дампы] |
+
+## 4. Официальное решение (Root Cause Fix)
+[Пошаговая инструкция по полному устранению первопричины].
+1. Шаг один...
+2. Шаг два...
+
+## 5. Технический Workaround / Smart Filter
+[Если применимо: временное решение или программный алгоритм фильтрации аномалий].
+* **Логика:** [Описание алгоритма]
+* **Пример кода:** [Блок кода, если есть]
+
+## 6. Шаблон ответа клиенту (Copy/Paste)
+### RU
+[Готовый текст для Omnidesk на русском]
+
+### EN (if applicable)
+[Готовый текст на английском]
+
+## 7. Критерии эскалации на L2/Dev
+* [Условие 1]
+* [Условие 2]
+
+## 8. Ограничения и Безопасность
+* **Запрещено:** [Действие]
+* **Важно:** [Риск/Последствие]
+
+## 9. Справочные материалы
+* [Ссылка на dev.iridi.com]
+* [Внутренние регламенты]
+
+## 10. История изменений
+| Дата | Версия | Изменения | Автор |
+| :--- | :--- | :--- | :--- |
+| 2026-04-29 | 1.0 | Initial Generation | KBAE Assistant |`);
+  const [systemInstruction, setSystemInstruction] = useState(`# System Prompt: Knowledge Base Automation Engine (KBAE) v3.0
+
+## ROLE
+Ты — Senior Fullstack Developer, эксперт технической поддержки и ведущий системный аналитик iRidium Ltd. Твоя задача: профессиональная трансформация диалогов из тикет-системы (Omnidesk) в структурированные статьи базы знаний (Bookstack) на русском языке. Ты выступаешь в роли интеллектуального фильтра, отделяющего симптомы от истинных причин.
+
+## BOOKSTACK ROUTING & METADATA LOGIC
+Перед генерацией текста определи параметры размещения и заполни YAML Frontmatter в самом верху статьи:
+1. target_book: Основная категория (iRidium Pro, i3 lite, Hardware, Cloud).
+2. target_chapter: Технический компонент (Server, Scripting, KNX, Licensing и т.д.).
+3. tags: Ключевые слова проблемы и задействованные технологии.
+4. priority: Приоритет решения (Low, Medium, High, Critical).
+5. root_cause_category: Категория первопричины (напр., Configuration Conflict, Bug, Documentation Error).
+
+## ALGORITHM: STEP-BY-STEP ANALYSIS
+1. Многофакторный анализ (Chain of Thought):
+   - Разбей тикет на факты: симптомы клиента vs ответы поддержки.
+   - Идентифицируй "ложные корреляции" (когда сначала подозревали одно, а причиной оказалось другое).
+2. Верификация (Grounding):
+   - Сверь технические утверждения с технической документацией.
+   - Если решение является временным (Workaround), обязательно пометь его соответствующим образом.
+3. Формулировка и Стиль:
+   - Тон: Максимально лаконичный, авторитетный и деловой.
+   - Структура: Обязательно используй таблицы для сопоставления симптомов и причин.
+   - Запреты: Никакой воды и неуверенных формулировок («мы постараемся»).
+
+## EXPORT REQUIREMENTS
+- Формат: Исключительно чистый Markdown (.md).
+- Обязательное наличие YAML Frontmatter в самом начале файла.
+- Краткое описание (description) должно представлять собой содержательное резюме статьи, состоящее ровно из 3 полноценных предложений.`);
+  const [searchPrompt, setSearchPrompt] = useState(`Основываясь на задаче: "{goal}" и содержании источников:
+{sources}
+
+ЦЕЛЬ: Сгенерировать ровно 5 узких поисковых запросов для BookStack Wiki, чтобы найти:
+1. ТОЧНЫЕ ДУБЛИКАКТЫ создаваемой статьи (когда описывается тот же объект, то же действие в той же системе).
+2. ПОЛЕЗНЫЙ КОНТЕКСТ (смежные процессы, предварительные шаги, зависимые компоненты, похожие ошибки).
+
+---
+ИНСТРУКЦИЯ ПО ГЕНЕРАЦИИ ЗАПРОСОВ:
+
+ШАГ 1 — Извлечение точных идентификаторов (для дубликатов):
+- Ищи коды ошибок, артикулы оборудования, точные версии ПО или названия модулей (напр., "RouterOS 7.3", "ERR_1042", "LDAP Bitrix24").
+- Сформируй 2-3 специфичных запроса на их основе длиной 1-3 слова.
+
+ШАГ 2 — Определение смысловых слоев (для контекста):
+- Проанализируй платформу, зависимости (что нужно настроить "до" или "после"), роль пользователя и категорию проблемы (интеграция, сброс и т.д.).
+- Сформируй 2 запроса шире, чем для дублей, но строго в контексте системы (длина 2-5 слов).
+
+ОГРАНИЧЕНИЯ:
+❌ Запрещено использовать общие бесполезные слова в одиночку: "настройка", "ошибка", "сервер", "авторизация".
+✅ Используй конкретные пары: "ipsec xauth timeout", "ldap error 49", "exchange autodiscover", "настройка ldap bitrix".
+
+---
+Верни СТРОГО JSON-массив из 5 строк без Markdown-разметки и пояснений:
+["запрос1", "запрос2", "запрос3", "запрос4", "запрос5"]`);
+  const [duplicatePrompt, setDuplicatePrompt] = useState(`Вы — строгий системный аналитик базы знаний BookStack класса Senior.
+Цель пользователя: "{goal}".
+Новый материал: 
+---
+{sources}
+---
+
+Найденные статьи в Wiki:
+{retrievedPages}
+
+ЦЕЛЬ: Оценить каждую найденную статью строго на предмет того, является ли она ТОЧНЫМ ДУБЛИКАТОМ (статьей, которую нужно полностью обновить и заменить новым материалом).
+
+ПРАВИЛА ОЦЕНКИ:
+- Дубль = статья описывает ТОТ ЖЕ объект + ТО ЖЕ действие + В ТОЙ ЖЕ системе (например, "Сброс 2FA в Mikrotik" и "Mikrotik: сбросить двухфакторную аутентификацию" - это дубли).
+- НЕ дубль = смежная статья или статья о другой ошибке в той же системе (например, настройка VPN в Mikrotik - это контекст, но не дубль).
+- Если есть малейшие сомнения, ставьте "isDuplicate": false.
+
+Верни СТРОГО структурированный JSON:
+{
+  "evaluatedPages": [
+    {
+      "id": number,
+      "reason": "краткое четкое обоснование сходства процессов на русском языке",
+      "isDuplicate": boolean
+    }
+  ]
+}`);
+  const [contextPrompt, setContextPrompt] = useState(`Вы — ведущий архитектор базы знаний BookStack.
+Цель пользователя: "{goal}".
+Новый материал:
+---
+{sources}
+---
+
+Ранее найденные статьи в Wiki:
+{retrievedPages}
+
+ЦЕЛЬ: Оценить каждую статью на полезность в качестве технического КОНТЕКСТА или справочного материала для создаваемой статьи.
+
+ПРАВИЛА ОЦЕНКИ:
+- Статья полезна как контекст, если она описывает общую систему, в которую внедряется инструкция, смежные компоненты, требования безопасности, prerequisites (предварительные условия), или содержит общие разделы, которые помогут сделать статью полнее.
+- Пишите честное обоснование для каждой статьи.
+
+Верни СТРОГО структурированный JSON:
+{
+  "evaluatedPages": [
+    {
+      "id": number,
+      "reason": "почему эта статья полезна как контекст или prerequisite на русском языке",
+      "isContext": boolean
+    }
+  ]
+}`);
   const [geminiModel, setGeminiModel] = useState<GeminiModelId>(DEFAULT_MODEL);
 
   const { uploadProgress, isDragging, setIsDragging, processFiles, handleSpecialFileUpload } = useFileUpload(
@@ -143,10 +374,11 @@ export default function App() {
     setSources,
     setSystemInstruction,
     setDataStructure,
-    executionControl
+    executionControl,
+    activeSkills
   );
 
-  const { handleSync, confirmAndPublish, handleRefinement, handleGenerateMindmap, handleGenerateFAQ, handleRagChoice } = useAgentActions({
+  const { handleSync, confirmAndPublish, handleRefinement, handleGenerateMindmap, handleGenerateFAQ, handleGenerateMermaid, handleRagChoice } = useAgentActions({
     credentials,
     books,
     setBooks,
@@ -177,11 +409,13 @@ export default function App() {
     setIsConsoleOpen,
     setRagConfirmation,
     setMindmapData,
+    setMermaidData,
     executionControl,
     loadChapterPages,
     loadChaptersAndPages,
     setSelectedBookId,
-    setSelectedPageId
+    setSelectedPageId,
+    activeSkills
   });
 
   useEffect(() => {
@@ -209,13 +443,45 @@ export default function App() {
           agent_search_prompt: searchPrompt,
           agent_duplicate_prompt: duplicatePrompt,
           agent_context_prompt: contextPrompt,
-          agent_gemini_model: geminiModel
+          agent_active_skills: activeSkills,
+          agent_default_active_skills: defaultActiveSkills,
+          agent_gemini_model: geminiModel,
+          agent_custom_presets: customPresets,
+          agent_selected_preset: selectedPreset
         })
       }).catch(console.error);
     }, 1000);
 
     return () => clearTimeout(timer);
-  }, [sources, workMode, dataStructure, systemInstruction, searchPrompt, duplicatePrompt, contextPrompt, geminiModel, isSettingsLoaded]);
+  }, [sources, workMode, dataStructure, systemInstruction, searchPrompt, duplicatePrompt, contextPrompt, activeSkills, defaultActiveSkills, geminiModel, customPresets, selectedPreset, isSettingsLoaded]);
+
+  const forceSaveSettings = () => {
+    fetch('/api/settings', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        bookstack_sources: sources,
+        agent_work_mode: workMode,
+        agent_data_structure: dataStructure,
+        agent_system_instruction: systemInstruction,
+        agent_search_prompt: searchPrompt,
+        agent_duplicate_prompt: duplicatePrompt,
+        agent_context_prompt: contextPrompt,
+        agent_active_skills: activeSkills,
+        agent_default_active_skills: defaultActiveSkills,
+        agent_gemini_model: geminiModel,
+        agent_custom_presets: customPresets,
+        agent_selected_preset: selectedPreset
+      })
+    })
+    .then(r => r.json())
+    .then(() => {
+      console.log('Settings successfully persisted on server');
+    })
+    .catch(console.error);
+  };
 
   const handleDragOver = (e: DragEvent) => {
     e.preventDefault();
@@ -253,6 +519,7 @@ export default function App() {
       <main className="max-w-6xl mx-auto px-10 py-12">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-12">
           <SourceEditorPanel
+            onSaveSettings={forceSaveSettings}
             isConfigOpen={isConfigOpen}
             setIsConfigOpen={setIsConfigOpen}
             systemInstruction={systemInstruction}
@@ -289,9 +556,17 @@ export default function App() {
             setInstructions={setInstructions}
             content={content}
             setContent={setContent}
+            activeSkills={activeSkills}
+            setActiveSkills={setActiveSkills}
+            defaultActiveSkills={defaultActiveSkills}
+            setDefaultActiveSkills={setDefaultActiveSkills}
+            customPresets={customPresets}
+            setCustomPresets={setCustomPresets}
+            selectedPreset={selectedPreset}
+            setSelectedPreset={setSelectedPreset}
           />
 
-          <KnowledgeSyncPanel
+           <KnowledgeSyncPanel
             targetMode={targetMode}
             setTargetMode={setTargetMode}
             selectedBookId={selectedBookId}
@@ -314,6 +589,7 @@ export default function App() {
             contentLength={content.trim().length}
             handleGenerateMindmap={handleGenerateMindmap}
             handleGenerateFAQ={handleGenerateFAQ}
+            handleGenerateMermaid={handleGenerateMermaid}
             setIsConfigOpen={setIsConfigOpen}
           />
         </div>
@@ -322,11 +598,45 @@ export default function App() {
       <AppFooter />
 
       {previewSource && (
-        <PreviewModal previewSource={previewSource} setPreviewSource={setPreviewSource} />
+        <PreviewModal 
+          previewSource={previewSource} 
+          setPreviewSource={setPreviewSource} 
+          onAnalyzeLogs={handleAnalyzeLogs}
+        />
+      )}
+
+      {logAnalysisResult && (
+        <LogAnalysisModal
+          isOpen={!!logAnalysisResult}
+          onClose={() => setLogAnalysisResult(null)}
+          report={logAnalysisResult}
+          logName={logAnalysisName}
+          onInsertToDraft={handleInsertLogAnalysisToDraft}
+        />
       )}
 
       {mindmapData && (
         <MindmapModal mindmapData={mindmapData} setMindmapData={setMindmapData} handleSync={handleSync} />
+      )}
+
+      {mermaidData && (
+        <MermaidModal 
+          mermaidData={mermaidData} 
+          setMermaidData={setMermaidData} 
+          handleSync={handleSync} 
+          onInsertToPage={(mermaidMd) => {
+            if (lastResponse) {
+              setLastResponse({
+                ...lastResponse,
+                markdown: lastResponse.markdown + mermaidMd
+              });
+              executionControl.setSyncStatus({ type: 'success', message: 'Схема Mermaid добавлена в черновик статьи!' });
+            } else {
+              setContent((prev: string) => prev + mermaidMd);
+              executionControl.setSyncStatus({ type: 'success', message: 'Схема Mermaid вставлена в текстовое поле!' });
+            }
+          }}
+        />
       )}
 
       {ragConfirmation && (

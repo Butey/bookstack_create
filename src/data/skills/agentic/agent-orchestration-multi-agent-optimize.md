@@ -1,0 +1,1 @@
+---\nid: agent-orchestration-multi-agent-optimize\nname: Multi-Agent Optimizer\ndescription: Динамически распределяет задачи между пулом агентов для повышения качества черновика.\nbadge: Оркестрация\nicon: Layers\n---\n\n# Multi-Agent Optimizer\n\nДинамически распределяет задачи между пулом агентов для повышения качества черновика.\n

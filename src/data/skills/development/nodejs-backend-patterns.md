@@ -1,0 +1,1 @@
+---\nid: nodejs-backend-patterns\nname: Node.js Backend\ndescription: Интеграция паттернов разработки бэкенда на Node.js.\nbadge: Код\nicon: Terminal\n---\n\n# Node.js Backend\n\nИнтеграция паттернов разработки бэкенда на Node.js.\n

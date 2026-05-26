@@ -21,6 +21,7 @@ apiRouter.post('/settings/secure-update', apiController.updateSecureSettings);
 
 apiRouter.post('/process-source', upload.single('file'), apiController.processSource);
 apiRouter.post('/gemini/generate', apiController.generateGemini);
+apiRouter.post('/gemini/generate-article', apiController.generateArticle);
 apiRouter.post('/bookstack/proxy', apiController.proxyBookStack);
 apiRouter.post('/omnidesk/ticket', apiController.fetchOmnideskTicket);
 apiRouter.post('/omnidesk/webhook', apiController.handleOmnideskWebhook);

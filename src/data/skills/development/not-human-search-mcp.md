@@ -1,0 +1,1 @@
+---\nid: not-human-search-mcp\nname: Machine Search\ndescription: Интеграция Machine-to-Machine поисковых протоколов.\nbadge: Код\nicon: Search\n---\n\n# Machine Search\n\nИнтеграция Machine-to-Machine поисковых протоколов.\n

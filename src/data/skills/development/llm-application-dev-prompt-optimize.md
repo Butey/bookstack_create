@@ -1,0 +1,1 @@
+---\nid: llm-application-dev-prompt-optimize\nname: Prompt Optimize\ndescription: Оптимизация и тонкая настройка промптов.\nbadge: Код\nicon: Settings\n---\n\n# Prompt Optimize\n\nОптимизация и тонкая настройка промптов.\n

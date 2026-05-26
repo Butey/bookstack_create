@@ -1,0 +1,1 @@
+---\nid: database\nname: Database\ndescription: Базовые практики проектирования хранилищ данных.\nbadge: Код\nicon: Database\n---\n\n# Database\n\nБазовые практики проектирования хранилищ данных.\n

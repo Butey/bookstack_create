@@ -1,0 +1,1 @@
+---\nid: mcp-tool-developer\nname: MCP Tool Developer\ndescription: Автоматически разрабатывает и специфицирует новые инструменты MCP (Model Context Protocol).\nbadge: Спецификации\nicon: Terminal\n---\n\n# MCP Tool Developer\n\nАвтоматически разрабатывает и специфицирует новые инструменты MCP (Model Context Protocol).\n

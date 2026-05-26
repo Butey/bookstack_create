@@ -28,7 +28,8 @@ export class OmnideskService {
         headers: {
           'Authorization': `Basic ${authString}`,
           'Accept': 'application/json'
-        }
+        },
+        timeout: 10000 // 10 seconds timeout
       });
 
       const data = resp.data;
@@ -52,22 +53,24 @@ export class OmnideskService {
         headers: {
           'Authorization': `Basic ${authString}`,
           'Accept': 'application/json'
-        }
+        },
+        timeout: 15000 // 15 seconds timeout
       });
       
       // 1. Нормализуем массив сообщений
       let messagesList: any[] = [];
       const rawData = messagesResp.data;
 
-      // 1. Извлекаем сообщения глубоким обходом (Deep Traversal),
+      // 1. Извлекаем сообщения глубоким обходом (Deep Traversal) с защитой от бесконечной рекурсии (depth),
       // чтобы игнорировать любые изменения структуры API (массивы, объекты с индексами и т.д.)
-      const extractMessagesDeep = (obj: any, extracted: any[] = []) => {
+      const extractMessagesDeep = (obj: any, extracted: any[] = [], depth = 0) => {
+        if (depth > 25) return extracted;
         if (!obj || typeof obj !== 'object') return extracted;
         
         // Массивы обходим
         if (Array.isArray(obj)) {
           for (const item of obj) {
-            extractMessagesDeep(item, extracted);
+            extractMessagesDeep(item, extracted, depth + 1);
           }
           return extracted;
         }
@@ -114,7 +117,7 @@ export class OmnideskService {
                      child._derived_role = roleStr;
                   }
                }
-               extractMessagesDeep(child, extracted);
+               extractMessagesDeep(child, extracted, depth + 1);
              }
            }
         }
@@ -220,7 +223,10 @@ export class OmnideskService {
         const limitedTasks = attachmentTasks.slice(0, 10); // limited to 10
         await Promise.all(limitedTasks.map(async (attach) => {
           try {
-            const fileResp = await axios.get(attach.url, { responseType: 'arraybuffer' });
+            const fileResp = await axios.get(attach.url, { 
+              responseType: 'arraybuffer',
+              timeout: 8000 // 8 seconds timeout per attachment
+            });
             if (fileResp.data) {
               const base64 = Buffer.from(fileResp.data, 'binary').toString('base64');
               attachmentsOutput.push({

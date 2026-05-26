@@ -1,0 +1,1 @@
+---\nid: multi-agent-patterns\nname: Multi-Agent Patterns\ndescription: Применение паттернов кооперации нескольких LLM-агентов.\nbadge: Код\nicon: Cpu\n---\n\n# Multi-Agent Patterns\n\nПрименение паттернов кооперации нескольких LLM-агентов.\n

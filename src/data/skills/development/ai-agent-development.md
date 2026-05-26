@@ -1,0 +1,1 @@
+---\nid: ai-agent-development\nname: AI Gen. Agent\ndescription: Паттерны проектирования автономных AI агентов.\nbadge: Код\nicon: Sparkles\n---\n\n# AI Gen. Agent\n\nПаттерны проектирования автономных AI агентов.\n

@@ -18,7 +18,7 @@ import {
   Info,
   FileText
 } from 'lucide-react';
-import Markdown from 'react-markdown';
+import { AEMarkdown } from './AEMarkdown';
 import { ProcessedArticle } from '../types';
 
 interface EditorConsoleProps {
@@ -162,9 +162,22 @@ export const EditorConsole = React.memo(function EditorConsole({
                       <h3 className="text-[11px] font-bold uppercase tracking-[0.2em] text-editorial-text">Процесс размышления</h3>
                     </div>
                     <div className="bg-editorial-accent/5 border-l-2 border-editorial-text p-4 italic text-sm text-gray-700 leading-relaxed font-serif prose prose-sm max-w-none">
-                      <Markdown>{lastResponse.thinking || "Информация о процессе обработки отсутствует."}</Markdown>
+                      <AEMarkdown>{lastResponse.thinking || "Информация о процессе обработки отсутствует."}</AEMarkdown>
                     </div>
                   </section>
+
+                  {/* Article Draft Preview */}
+                  {lastResponse.markdown && (
+                    <section>
+                      <div className="flex items-center gap-2 mb-4">
+                        <FileText size={16} className="text-editorial-text" />
+                        <h3 className="text-[11px] font-bold uppercase tracking-[0.2em] text-editorial-text">Черновик статьи (с поддержкой Mermaid)</h3>
+                      </div>
+                      <div className="bg-white border-2 border-editorial-text p-6 max-h-[400px] overflow-y-auto custom-scrollbar text-sm text-gray-900 leading-relaxed font-sans prose prose-sm max-w-none">
+                        <AEMarkdown>{lastResponse.markdown}</AEMarkdown>
+                      </div>
+                    </section>
+                  )}
 
                   {/* Dialogue Refinement */}
                   {pendingApproval && (
@@ -222,6 +235,26 @@ export const EditorConsole = React.memo(function EditorConsole({
                             onChange={(e) => setLastResponse({...lastResponse, title: e.target.value})}
                           />
                         </div>
+                        <div className="space-y-1">
+                          <div className="flex justify-between items-center">
+                            <label className="text-[8px] uppercase tracking-widest text-gray-400 font-bold">Краткое описание (Meta-Description - 3 предложения)</label>
+                            <span className="text-[8px] font-mono text-gray-400">{(lastResponse.description ?? '').length} симв.</span>
+                          </div>
+                          <textarea 
+                            rows={3}
+                            className="w-full p-2 bg-gray-50 border border-editorial-text/20 text-xs font-semibold outline-none focus:border-editorial-text resize-none"
+                            value={lastResponse.description ?? ''}
+                            onChange={(e) => setLastResponse({...lastResponse, description: e.target.value})}
+                            placeholder="Автоматически сгенерированное краткое содержание из 3 предложений..."
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {!pendingApproval && lastResponse.description && (
+                      <div className="mb-4 p-4 bg-gray-50 border border-editorial-text/10">
+                        <span className="block text-[8px] uppercase tracking-widest text-gray-400 mb-1">Краткое описание (Meta-Description)</span>
+                        <p className="text-xs italic text-gray-600 font-serif leading-relaxed">{lastResponse.description}</p>
                       </div>
                     )}
 

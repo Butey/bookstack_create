@@ -1,0 +1,1 @@
+---\nid: context-degradation\nname: Context Degradation\ndescription: Защита от деградации контекста LLM при длинных сессиях.\nbadge: Код\nicon: Brain\n---\n\n# Context Degradation\n\nЗащита от деградации контекста LLM при длинных сессиях.\n

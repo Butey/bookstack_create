@@ -3,15 +3,15 @@
 
 import { BookStackCredentials } from '../types';
 export const GEMINI_MODELS = [
-  { id: 'gemini-3-flash-preview',  label: 'Gemini 3 Flash (Preview)', description: 'Быстрая, высокое качество' },
-  { id: 'gemini-3.1-flash-lite',   label: 'Gemini 3.1 Flash-Lite (Stable)', description: 'Быстрая и экономичная' },
-  { id: 'gemini-2.5-flash',        label: 'Gemini 2.5 Flash (Stable)', description: 'Цена/качество, рассуждения' },
-  { id: 'gemini-2.5-pro',          label: 'Gemini 2.5 Pro (Stable)', description: 'Мощная модель для сложных задач' },
+  { id: 'gemini-3.5-flash',        label: 'Gemini 3.5 Flash (Рекомендуется)', description: 'Быстрая, высокая точность, подходит для большинства задач' },
+  { id: 'gemini-3.1-pro-preview',  label: 'Gemini 3.1 Pro (Preview)', description: 'Максимальное качество для сложных структурированных статей' },
+  { id: 'gemini-3.1-flash-lite',   label: 'Gemini 3.1 Flash-Lite (Stable)', description: 'Сверхбыстрая и экономичная модель' },
+  { id: 'gemini-flash-latest',     label: 'Gemini Flash Latest (Stable)', description: 'Стабильная модель общего назначения' },
 ] as const;
 
 export type GeminiModelId = typeof GEMINI_MODELS[number]['id'];
 
-export const DEFAULT_MODEL: GeminiModelId = 'gemini-3-flash-preview';
+export const DEFAULT_MODEL: GeminiModelId = 'gemini-3.5-flash';
 
 export interface CallGeminiConfig {
   responseMimeType?: string;
@@ -23,28 +23,44 @@ export interface CallGeminiConfig {
 
 export async function callGemini(model: GeminiModelId, contents: any[], config?: CallGeminiConfig): Promise<string> {
   if (config?.checkPause) await config.checkPause();
-  const res = await fetch('/api/gemini/generate', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ 
-      model, 
-      contents, 
-      config: { 
-        responseMimeType: config?.responseMimeType,
-        responseSchema: config?.responseSchema,
-        systemInstruction: config?.systemInstruction
-      } 
-    }),
-    signal: config?.signal
-  });
-  const data = await res.json();
+  
+  let res;
+  try {
+    res = await fetch('/api/gemini/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 
+        model, 
+        contents, 
+        config: { 
+          responseMimeType: config?.responseMimeType,
+          responseSchema: config?.responseSchema,
+          systemInstruction: config?.systemInstruction
+        } 
+      }),
+      signal: config?.signal
+    });
+  } catch (err: any) {
+    if (err.name === 'AbortError') {
+      throw err;
+    }
+    throw new Error(`Сетевая ошибка (Failed to fetch). Возможные причины: превышено время ожидания ИИ (timeout), сервер перезапускается, отсутствует интернет-соединение или заблокированы запросы до Google Gemini API. Пожалуйста, попробуйте другую модель (например, Flash вместо Pro) или повторите запуск позже.`);
+  }
+
+  let data;
+  try {
+    data = await res.json();
+  } catch (jsonErr) {
+    throw new Error(`Некорректный ответ от прокси-сервера (не JSON-формат). Статус ответа: ${res.status}`);
+  }
+
   if (!res.ok) {
     throw new Error(data.error || `Server error ${res.status}`);
   }
   return data.text || '';
 }
 
-export function extractJson(text: string) {
+export function extractJson(text: string): any {
   if (!text) return {};
   try {
     return JSON.parse(text);
@@ -65,16 +81,9 @@ export function extractJson(text: string) {
       }
       try { return JSON.parse(text.substring(firstBrace, lastBrace + 1)); } catch (_) {}
     }
-    
-    if (firstBracket !== -1 && lastBracket !== -1 && lastBracket > firstBracket) {
-      try { return JSON.parse(text.substring(firstBracket, lastBracket + 1)); } catch (_) {}
-    }
-    
-    console.error("Failed to parse JSON string:", text.substring(0, 500));
-    throw new Error("Could not parse JSON from model response");
+    return {};
   }
 }
-
 
 export async function generateArticleFromSources(
   sources: string,
@@ -84,178 +93,120 @@ export async function generateArticleFromSources(
   previousChat?: { role: 'user' | 'model', content: string }[],
   model: GeminiModelId = DEFAULT_MODEL,
   existingContent?: string,
-  options?: { signal?: AbortSignal, checkPause?: () => Promise<void>, onProgress?: (msg: string) => void, systemInstruction?: string, dataStructure?: string },
+  options?: { 
+    signal?: AbortSignal, 
+    checkPause?: () => Promise<void>, 
+    onProgress?: (msg: string) => void, 
+    systemInstruction?: string, 
+    dataStructure?: string,
+    activeSkills?: Record<string, boolean>
+  },
   attachments?: { mimeType: string; data: string }[]
-) {
-  const contextStr = availableContext
-    ? `\nСПИСОК ДОСТУПНЫХ МЕСТ (КНИГИ И ГЛАВЫ):
-       КНИГИ: ${JSON.stringify(availableContext.books.map(b => ({ id: b.id, name: b.name })))}
-       ГЛАВЫ: ${JSON.stringify(availableContext.chapters.map(c => ({ id: c.id, name: c.name, book_id: c.book_id })))}
-       
-       ИНСТРУКЦИЯ ПО ВЫБОРУ МЕСТА (ОЧЕНЬ ВАЖНО): 
-       1. ВНИМАТЕЛЬНО изучи СПИСОК КНИГ И ГЛАВ. Твоя главная цель — найти уже существующее релевантное место, а не плодить новые сущности!
-       2. Ищи по синонимам, пересечениям тем или более широким категориям. Если новая статья логически вписывается в существующую книгу или главу (даже если название не совпадает на 100%), обязательно используй ЕЁ ID.
-       3. Предлагай создание новой книги/главы (указав ID null и название в newBookName/newChapterName) ТОЛЬКО в самом крайнем случае, если тема совершенно новая и не имеет ничего общего с текущей структурой базы знаний.
-       4. Обязательно верни ID книги в targetBookId и ID главы в targetChapterId (если применимо).\n`
-    : '';
+): Promise<any> {
+  if (options?.onProgress) {
+    options.onProgress('Запуск многоагентного синтеза на бэкенде (все агенты включены постоянно)...');
+  }
 
-  const historyPrompt = previousChat && previousChat.length > 0
-    ? `\nПРЕДЫДУЩИЙ ДИАЛОГ И ПРАВКИ:\n${previousChat.map(m => `${m.role === 'user' ? 'ПОЛЬЗОВАТЕЛЬ' : 'АГЕНТ'}: ${m.content}`).join('\n')}\n`
-    : '';
-
-  const existingContentPrompt = existingContent
-    ? (targetMode === 'update' 
-        ? `\nСУЩЕСТВУЮЩЕЕ СОДЕРЖИМОЕ СТАТЬИ:\n${existingContent}\n\nИНСТРУКЦИЯ: Статья обновляется. Учитывай существующий контент при планировании структуры!\n`
-        : `\nИНФОРМАЦИЯ О ДУБЛИКАТАХ В БАЗЕ:\n${existingContent}\n\nИНСТРУКЦИЯ: Вы создаете новую статью, но в базе уже есть похожие. Пожалуйста, учтите их существование и при необходимости сошлитесь на них или укажите их урлы в поле duplicateLinks.\n`
-      )
-    : '';
-
-  const getParts = (promptText: string) => {
-     const parts: any[] = [{ text: promptText }];
-     if (attachments && attachments.length > 0) {
-        attachments.forEach(a => {
-           parts.push({ inlineData: { mimeType: a.mimeType, data: a.data } });
-        });
-     }
-     return parts;
-  };
-
-  const sysInstruction = options?.systemInstruction ? options.systemInstruction : "Вы — профессиональный технический писатель и редактор.";
-
-  // --- STAGE 1: PLAN ---
-  if (options?.onProgress) options.onProgress('Этап 1: Планирование структуры статьи...');
-  
-  const planPrompt = `
-    Ваша задача — спланировать структуру статьи (или обновления) на основе предоставленных материалов.
-
-    ${options?.dataStructure ? `ТРЕБУЕМАЯ СТРУКТУРА ДАННЫХ:\n${options.dataStructure}\nОбязательно учитывайте эти правила при планировании.\n` : ''}
-    ${contextStr}
-    ${historyPrompt}
-    ${existingContentPrompt}
-
-    ИСТОЧНИКИ:
-    ${sources}
-
-    ЦЕЛЬ ЗАДАЧИ:
-    ${goal}
-  `;
-
-  let plan;
   try {
-    const planText = await callGemini(model, [{ role: 'user', parts: getParts(planPrompt) }], {
-      responseMimeType: 'application/json',
-      responseSchema: {
-        type: "object",
-        properties: {
-          thinking: { type: "string", description: "логика выбора места. Если вы заметили похожие статьи, предложите их объединение и объясните почему. Ваша цель - избегать создания дубликатов" },
-          title: { type: "string", description: "идеальный заголовок статьи" },
-          outline: { type: "string", description: "подробный пошаговый план статьи (какие разделы)" },
-          targetBookId: { type: "number", nullable: true },
-          targetChapterId: { type: "number", nullable: true },
-          newBookName: { type: "string", nullable: true },
-          newChapterName: { type: "string", nullable: true },
-          duplicateLinks: { type: "array", items: { type: "string" } }
-        },
-        required: ["thinking", "title", "outline"]
-      },
-      systemInstruction: sysInstruction,
-      signal: options?.signal, 
-      checkPause: options?.checkPause 
+    const response = await fetch('/api/gemini/generate-article', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sources,
+        goal,
+        targetMode,
+        availableContext,
+        model,
+        existingContent,
+        systemInstruction: options?.systemInstruction,
+        dataStructure: options?.dataStructure,
+        attachments
+      }),
+      signal: options?.signal
     });
-    plan = extractJson(planText);
-  } catch (error: any) { throw new Error(`Ошибка на этапе планирования: ${error.message || String(error)}`); }
 
-  // --- STAGE 2: DRAFT ---
-  if (options?.onProgress) options.onProgress(`Этап 2: Написание черновика "${plan.title}"...`);
+    if (!response.ok) {
+      const errData = await response.json();
+      throw new Error(errData.error || `HTTP error! status: ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data;
+  } catch (error: any) {
+    if (error.name === 'AbortError') {
+      throw error;
+    }
+    console.warn('Backend generateArticle failed, throwing error:', error);
+    throw new Error(`Ошибка генерации статьи на бэкенде: ${error.message || String(error)}`);
+  }
+}
+
+/**
+ * Генерирует интерактивное оглавление (Table of Contents) на основе заголовков Markdown.
+ * Оглавление строится, если статья достаточно длинная (содержит 2 и более заголовков).
+ */
+export function generateTableOfContents(markdown: string): string {
+  if (!markdown) return markdown;
   
-  const draftPrompt = `
-    Ваша задача — написать подробный и качественный контент для Wiki-статьи по подготовленному плану.
+  const lines = markdown.split('\n');
+  const toc: string[] = [];
+  let inCodeBlock = false;
 
-    ${options?.dataStructure ? `ОБЯЗАТЕЛЬНАЯ СТРУКТУРА ДАННЫХ:\n${options.dataStructure}\nСтрого следуйте указанному формату!\n` : ''}
-    ${historyPrompt}
-    ${(targetMode === 'update' && existingContent) ? `\nСУЩЕСТВУЮЩАЯ СТАТЬЯ ДЛЯ ОБНОВЛЕНИЯ:\n${existingContent}\nВплетите новые факты, не удаляя нужную старую информацию.\n` : ''}
+  for (const line of lines) {
+    const trimmed = line.trim();
+    // Пропускаем блоки кода, заголовки внутри них не учитываются
+    if (trimmed.startsWith('```')) {
+      inCodeBlock = !inCodeBlock;
+      continue;
+    }
+    if (inCodeBlock) continue;
 
-    ИСТОЧНИКИ ДЛЯ РАБОТЫ:
-    ${sources}
+    // Регулярное выражение для поиска заголовков (от # до ######)
+    const headerMatch = line.match(/^(#{1,6})\s+(.+)$/);
+    if (headerMatch) {
+      const level = headerMatch[1].length;
+      const title = headerMatch[2].trim();
 
-    УТВЕРЖДЕННЫЙ ПЛАН:
-    Заголовок: ${plan.title}
-    Структура: ${plan.outline}
+      // Пропускаем служебные заголовки оглавления, чтобы избежать дублирования
+      const isSelfTOC = /^(содержание|оглавление|table\s+of\s+contents)$/i.test(title);
+      if (isSelfTOC) continue;
 
-    ЦЕЛЬ ЗАДАЧИ:
-    ${goal}
-  `;
+      // Отступы в зависимости от уровня заголовка (начиная со 2-го уровня)
+      const indent = '  '.repeat(Math.max(0, level - 1));
 
-  let draft;
-  try {
-    const draftText = await callGemini(model, [{ role: 'user', parts: getParts(draftPrompt) }], { 
-      responseMimeType: 'application/json',
-      responseSchema: {
-        type: "object",
-        properties: {
-          thinking: { type: "string", description: "как вы реализовывали план (кратко)" },
-          markdown: { type: "string", description: "ПОЛНЫЙ, КАЧЕСТВЕННЫЙ ТЕКСТ СТАТЬИ в формате Markdown на основе источников и плана" }
-        },
-        required: ["thinking", "markdown"]
-      },
-      systemInstruction: sysInstruction,
-      signal: options?.signal, 
-      checkPause: options?.checkPause 
-    });
-    draft = extractJson(draftText);
-  } catch (error: any) { throw new Error(`Ошибка на этапе написания черновика: ${error.message || String(error)}`); }
+      // Генерация Slug (якоря/ссылки) по правилам BookStack
+      const slug = title
+        .toLowerCase()
+        .replace(/[^\w\sа-яё\-]/gi, '') // удаление спецсимволов кроме букв, цифр, пробелов и дефисов
+        .trim()
+        .replace(/\s+/g, '-');         // пробелы в дефисы
 
-  // --- STAGE 3: REVIEW ---
-  if (options?.onProgress) options.onProgress('Этап 3: Финальное ревью и проверка качества...');
-  
-  const reviewPrompt = `
-    Проверьте черновик статьи. Сделайте текст более читаемым, исправьте опечатки, улучшите форматирование (Markdown). Убедитесь, что цель задачи выполнена.
+      if (slug) {
+        toc.push(`${indent}- [${title}](#${slug})`);
+      }
+    }
+  }
 
-    ЦЕЛЬ ЗАДАЧИ: ${goal}
-    ${historyPrompt}
+  // Если заголовков мало, оглавление не требуется
+  if (toc.length < 2) {
+    return markdown;
+  }
 
-    ЧЕРНОВИК ДЛЯ ПРОВЕРКИ:
-    ${draft.markdown}
+  const tocBlock = [
+    '## Содержание',
+    ...toc,
+    '',
+    '---',
+    ''
+  ].join('\n');
 
-    Сгенерируйте итоговый улучшенный текст, добавьте теги и краткое описание.
-  `;
-
-  let review;
-  try {
-    const reviewText = await callGemini(model, [{ role: 'user', parts: getParts(reviewPrompt) }], { 
-      responseMimeType: 'application/json',
-      responseSchema: {
-        type: "object",
-        properties: {
-          thinking: { type: "string", description: "какие улучшения были внесены в черновик" },
-          markdown: { type: "string", description: "Итоговый улучшенный текст статьи (весь полностью)" },
-          tags: { type: "array", items: { type: "string" } },
-          description: { type: "string", description: "краткое описание статьи (до 200 символов)" }
-        },
-        required: ["thinking", "markdown", "tags", "description"]
-      },
-      systemInstruction: sysInstruction,
-      signal: options?.signal, 
-      checkPause: options?.checkPause 
-    });
-    review = extractJson(reviewText);
-  } catch (error: any) { throw new Error(`Ошибка на этапе проверки: ${error.message || String(error)}`); }
-
-  // Combine and return
-  return {
-    thinking: "План: " + (plan.thinking || "") + "\n\nДрафт: " + (draft.thinking || "") + "\n\nРевью: " + (review.thinking || ""),
-    title: plan.title,
-    markdown: review.markdown,
-    tags: review.tags || [],
-    description: review.description || "",
-    targetBookId: plan.targetBookId || null,
-    targetChapterId: plan.targetChapterId || null,
-    newBookName: plan.newBookName || "",
-    newChapterName: plan.newChapterName || "",
-    targetPublishMode: undefined as any,
-    targetPublishPageId: undefined as any,
-    targetPublishBookId: undefined as any,
-  } as any;
+  // Вставляем оглавление после первого заголовка уровня H1 (# Заголовок) или в самое начало
+  const firstLine = lines[0] || '';
+  if (firstLine.trim().startsWith('# ')) {
+    return [lines[0], '', tocBlock, ...lines.slice(1)].join('\n');
+  } else {
+    return tocBlock + markdown;
+  }
 }
 
 export async function generateMindmap(
@@ -276,19 +227,49 @@ export async function generateFAQ(
   return callGemini(model, [{ role: 'user', parts: [{ text: prompt }] }], { signal: options?.signal, checkPause: options?.checkPause });
 }
 
+export async function generateMermaid(
+  combinedContent: string,
+  model: GeminiModelId = DEFAULT_MODEL,
+  options?: { signal?: AbortSignal, checkPause?: () => Promise<void> }
+): Promise<string> {
+  const prompt = `Вы — эксперт по визуализации данных и системный аналитик. Создайте детализированную схему Mermaid.js (например, graph TD, sequenceDiagram или stateDiagram-v2) на основе предоставленных источников или текста статьи.
+Схема должна визуализировать архитектуру, технический процесс, алгоритм работы или карту связей, описанную в контенте.
+
+Правила:
+1. Верните ТОЛЬКО код Mermaid внутри блока \`\`\`mermaid ... \`\`\`. Не пишите никакого вводного или заключительного текста.
+2. Используйте понятные текстовые метки на русском языке (для кириллицы в Mermaid используйте кавычки: A["Название шага"] --> B["Другой шаг"]).
+3. Сделайте диаграмму максимально информативной и структурированной.
+
+АКТИВНЫЕ ИСТОЧНИКИ:
+${combinedContent}`;
+  return callGemini(model, [{ role: 'user', parts: [{ text: prompt }] }], { signal: options?.signal, checkPause: options?.checkPause });
+}
+
 export async function extractTextFromFile(
   base64: string, 
   mimeType: string, 
   _model?: any, // Ignored to force cheap model
-  options?: { signal?: AbortSignal, checkPause?: () => Promise<void> }
+  options?: { signal?: AbortSignal, checkPause?: () => Promise<void>, activeSkills?: Record<string, boolean> }
 ) {
   const safeMimeType = mimeType === 'application/octet-stream' ? 'text/plain' : mimeType;
-  const parsingModel = 'gemini-3.1-flash-lite';
+  const parsingModel = 'gemini-3.5-flash';
 
-  const prompt = `Извлеки весь значимый текст из этого файла. 
+  let prompt = `Извлеки весь значимый текст из этого файла. 
     Если это HTML, убери скрипты и стили, верни только контент. 
     Если это PDF, сохрани логическую структуру. 
     Верни ТОЛЬКО извлеченный текст, без своих комментариев.`;
+
+  // --- SKILL: PDF-CONVERSION-ROUTER ---
+  if (safeMimeType === 'application/pdf') {
+    prompt = `Вы — высокоточная машина по разметке PDF документов и извлечению данных (OCR + Layout Structure).
+Ваша задача — извлечь весь значимый текст и таблицы из этого PDF-файла.
+Требования:
+1. Сохраняйте исходную логическую структуру и иерархию разделов (заголовки h1/h2/h3).
+2. Склеивайте разорванные слова и убирайте знаки переноса в слогах, возникшие из-за узких колонок PDF.
+3. ОБЯЗАТЕЛЬНО: Если в файле содержатся таблицы или структурированные списки, преобразуйте их в аккуратные, валидные Markdown-таблицы (со столбцами и разделителями |---|). Не сливайте колонки в кашу.
+4. Отформатируйте все неструктурированные перечисления.
+5. Верните исключительно чистый Markdown с текстом и таблицами, без ваших мета-комментариев.`;
+  }
 
   try {
     const text = await callGemini(
@@ -314,4 +295,47 @@ export async function extractTextFromFile(
     }
     throw new Error(`Не удалось извлечь текст из файла: ${message}`);
   }
+}
+
+export async function analyzeLogsDirectly(
+  logContent: string,
+  logName: string,
+  activeSkills?: Record<string, boolean>
+): Promise<string> {
+  const modelToUse = 'gemini-3.5-flash';
+  
+  let skillDirectives = '';
+  if (activeSkills?.['log-analyzer']) {
+    skillDirectives += `\n- Детально разберите ошибки (ERROR, CRITICAL, FATAL): выявите их причины, сгруппируйте по типам, подсчитайте частоту возникновения и предложите точечные технические решения по их устранению.`;
+  }
+  if (activeSkills?.['analyzing-logs']) {
+    skillDirectives += `\n- Проведите глубокий анализ производительности (Performance Insights): найдите медленные запросы (аномально высокий latency, длительные SQL-запросы или API-вызовы) и узкие места в системных ресурсах. Дайте рекомендации по ускорению и оптимизации.`;
+  }
+  if (!skillDirectives) {
+    skillDirectives = `\n- Проведите базовый разбор лог-файла: выявите ключевые предупреждения, ошибки и дайте общее состояние системы на основе логов.`;
+  }
+
+  const prompt = `Ты — элитный и опытный Senior DevOps и Cloud Infrastructure Architect.
+Проведи профессиональный разбор и анализ предоставленного лог-файла "${logName}".
+
+Вот содержимое логов:
+---
+${logContent.substring(0, 100000)} ${logContent.length > 100000 ? '\n\n[...Текст лога обрезан в целях экономии токенов...]' : ''}
+---
+
+Выполни следующие задачи:${skillDirectives}
+
+Требования к оформлению отчета:
+1. Пиши исключительно на русском языке, в авторитетном, строгом и лаконичном тоне.
+2. Используй профессиональный Markdown (с разделителями, блоками кода для стектрейсов или SQL-запросов, а также аккуратными таблицами).
+3. Избегай "воды". Сразу переходи к делу.
+4. В самом начале выведи Краткое резюме здоровья системы (Health Status): OK / Warning / Critical.
+
+Верни только готовый Markdown-отчет без каких-либо вводных слов вроде "Конечно, вот ваш отчет:".`;
+
+  return callGemini(
+    modelToUse as GeminiModelId,
+    [{ role: 'user', parts: [{ text: prompt }] }],
+    { systemInstruction: "You are an elite DevOps and senior system performance analyst." }
+  );
 }

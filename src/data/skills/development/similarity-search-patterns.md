@@ -1,0 +1,1 @@
+---\nid: similarity-search-patterns\nname: Similarity Search\ndescription: Паттерны векторного (Similarity) поиска в базах данных.\nbadge: Код\nicon: Search\n---\n\n# Similarity Search\n\nПаттерны векторного (Similarity) поиска в базах данных.\n

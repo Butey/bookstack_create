@@ -1,0 +1,1 @@
+---\nid: rag-implementation\nname: RAG Implementation\ndescription: Глубокое внедрение алгоритмов RAG.\nbadge: Код\nicon: Layers\n---\n\n# RAG Implementation\n\nГлубокое внедрение алгоритмов RAG.\n

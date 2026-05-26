@@ -1,0 +1,1 @@
+---\nid: data-structure-protocol\nname: Data Protocol\ndescription: Обеспечение соблюдения выбранного протокола струтур.\nbadge: Код\nicon: RefreshCw\n---\n\n# Data Protocol\n\nОбеспечение соблюдения выбранного протокола струтур.\n

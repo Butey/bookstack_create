@@ -1,0 +1,1 @@
+---\nid: llm-ops\nname: LLM Ops\ndescription: Применение практик MLOps в управлении LLM приложениями.\nbadge: Код\nicon: Activity\n---\n\n# LLM Ops\n\nПрименение практик MLOps в управлении LLM приложениями.\n

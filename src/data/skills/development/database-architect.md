@@ -1,0 +1,1 @@
+---\nid: database-architect\nname: DB Architect\ndescription: Глубокое архитектурное проектирование баз данных.\nbadge: Код\nicon: Network\n---\n\n# DB Architect\n\nГлубокое архитектурное проектирование баз данных.\n

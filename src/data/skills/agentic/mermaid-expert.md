@@ -1,0 +1,1 @@
+---\nid: mermaid-expert\nname: Mermaid Expert (Визуализация)\ndescription: Генерирует сложные Mermaid.js диаграммы: архитектурные графы, Sequence и State графики для отображения процессов.\nbadge: Схемы\nicon: Sparkles\n---\n\n# Mermaid Expert (Визуализация)\n\nГенерирует сложные Mermaid.js диаграммы: архитектурные графы, Sequence и State графики для отображения процессов.\n

@@ -1,8 +1,8 @@
 import React, { useState, useRef, useEffect, ChangeEvent } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence, useDragControls } from 'motion/react';
 import { Send, X, Bot, User, Loader2, Sparkles, Paperclip } from 'lucide-react';
 import { callGemini, GeminiModelId } from '../services/gemini';
-import Markdown from 'react-markdown';
+import { AEMarkdown } from './AEMarkdown';
 
 interface ChatWindowProps {
   isOpen: boolean;
@@ -19,14 +19,29 @@ export const ChatWindow = React.memo(function ChatWindow({ isOpen, onClose, sour
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const dragControls = useDragControls();
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const activeSources = sources.filter((s) => s.selected !== false);
 
   useEffect(() => {
-    if (messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [messages, isLoading]);
+    // Безопасная очистка аборт-контроллера при размонтировании
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    // Безопасная прокрутка с защитой от зависаний в контейнерах iframe
+    const timer = setTimeout(() => {
+      if (messagesEndRef.current) {
+        messagesEndRef.current.scrollIntoView({ behavior: 'auto', block: 'nearest' });
+      }
+    }, 80);
+    return () => clearTimeout(timer);
+  }, [messages.length, isLoading]);
 
   const handleSend = async (overrideInput?: string) => {
     const userMessage = overrideInput || input.trim();
@@ -38,9 +53,62 @@ export const ChatWindow = React.memo(function ChatWindow({ isOpen, onClose, sour
     setMessages((prev) => [...prev, { role: 'user', content: userMessage }]);
     setIsLoading(true);
 
+    // Перехват прямого запроса на создание или обновление статьи
+    const lowercaseMsg = userMessage.toLowerCase();
+    const isDirectSyncRequest = 
+      lowercaseMsg.includes('создай статью') ||
+      lowercaseMsg.includes('создать статью') ||
+      lowercaseMsg.includes('обнови статью') ||
+      lowercaseMsg.includes('обновить статью') ||
+      lowercaseMsg.includes('синтезируй статью') ||
+      lowercaseMsg.includes('синтезировать статью') ||
+      lowercaseMsg.includes('запусти генерацию') ||
+      lowercaseMsg.includes('запустить генерацию') ||
+      lowercaseMsg.includes('сгенерируй статью') ||
+      lowercaseMsg.includes('сгенерировать статью') ||
+      lowercaseMsg.includes('опубликуй статью') ||
+      lowercaseMsg.includes('опубликовать статью') ||
+      lowercaseMsg.includes('агент, запусти') ||
+      lowercaseMsg.includes('запусти синхронизацию') ||
+      lowercaseMsg.includes('запустить синхронизацию');
+
+    if (isDirectSyncRequest) {
+      setTimeout(() => {
+        setMessages((prev) => [...prev, { 
+          role: 'model', 
+          content: '🤖 *Обнаружен прямой запрос на генерацию статьи в Wiki. Запускаю ИИ-агента и процесс интеллектуального синтеза знаний на основе активных источников...*' 
+        }]);
+        setIsLoading(false);
+        
+        // Запускаем синхронизацию
+        onGenerateArticle();
+        // Закрываем окно чата, чтобы показать пользователю консоль выполнения
+        onClose();
+      }, 800);
+      return;
+    }
+
+    // Инициализация AbortController для текущего запроса
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    // Автоматический таймаут на 30 секунд
+    const timeoutId = setTimeout(() => {
+      controller.abort();
+    }, 30000);
+
     try {
+      // Безопасная фильтрация и обрезка контекста источников во избежание перегрузки ИИ и зависания
       const contextPrefix = activeSources.length > 0
-        ? `АКТИВНЫЕ ИСТОЧНИКИ ДЛЯ КОНТЕКСТА:\n${activeSources.map(s => `--- ${s.name} ---\n${s.content}`).join('\n\n')}\n\n`
+        ? `АКТИВНЫЕ ИСТОЧНИКИ ДЛЯ КОНТЕКСТА:\n${activeSources.map(s => {
+            const truncatedContent = s.content.length > 15000
+              ? s.content.substring(0, 15000) + '\n... [Контент статьи принудительно усечен для повышения стабильности чата] ...'
+              : s.content;
+            return `--- ${s.name} ---\n${truncatedContent}`;
+          }).join('\n\n')}\n\n`
         : 'У вас пока нет загруженных источников, действуйте на основе своих общих знаний.\n\n';
         
       const systemPrompt = `Вы — Ассистент NotebookLM. Ваша задача — отвечать на вопросы пользователя на основе предоставленных 'Активных источников' (документов).\nЕсли ответа нет в источниках, скажите об этом, но вы также можете использовать свои знания, если это уместно.\n\n${contextPrefix}`;
@@ -50,31 +118,35 @@ export const ChatWindow = React.memo(function ChatWindow({ isOpen, onClose, sour
         parts: [{ text: m.content }]
       }));
 
-      const newHistory = [
-        { role: 'user', parts: [{ text: systemPrompt + 'ТЕКУЩИЙ ВОПРОС: ' + userMessage }] }
-      ];
-
-      // To keep it simple, we just prepend the system prompt context to the current question,
-      // and append it to prior conversational history (without the huge context block each time to save raw tokens if possible, but actually we need to send the context. 
-      // Let's just send the whole thing as a single user prompt for the latest turn if history is small, or use it as standard context.
-      
       const fullMessages = [
         ...history,
         { role: 'user', parts: [{ text: (history.length === 0 ? systemPrompt : 'ИНСТРУКЦИИ/ИСТОЧНИКИ ВЫШЕ. ТЕКУЩИЙ ВОПРОС: ') + userMessage }] }
       ] as any;
 
       if (history.length > 0) {
-        // If there's history, we must ensure the very first user message contains the system context
         fullMessages[0].parts[0].text = systemPrompt + ' ВОПРОС: ' + fullMessages[0].parts[0].text;
       }
 
-      const response = await callGemini(model, fullMessages);
+      const response = await callGemini(model, fullMessages, { signal: controller.signal });
+      clearTimeout(timeoutId);
       setMessages((prev) => [...prev, { role: 'model', content: response }]);
     } catch (error: any) {
+      clearTimeout(timeoutId);
       console.error(error);
-      setMessages((prev) => [...prev, { role: 'model', content: `**Ошибка:** ${error.message || 'Не удалось получить ответ'}` }]);
+      
+      if (error.name === 'AbortError') {
+        setMessages((prev) => [...prev, { 
+          role: 'model', 
+          content: '⏱️ **Операция отменена.** Превышено время ожидания ответа ИИ (30 секунд) или вы прервали обработку вручную. Попробуйте отключить часть активных источников информации.' 
+        }]);
+      } else {
+        setMessages((prev) => [...prev, { role: 'model', content: `**Ошибка:** ${error.message || 'Не удалось получить ответ'}` }]);
+      }
     } finally {
       setIsLoading(false);
+      if (abortControllerRef.current === controller) {
+        abortControllerRef.current = null;
+      }
     }
   };
 
@@ -85,10 +157,18 @@ export const ChatWindow = React.memo(function ChatWindow({ isOpen, onClose, sour
           initial={{ opacity: 0, x: 20 }}
           animate={{ opacity: 1, x: 0 }}
           exit={{ opacity: 0, x: 20 }}
+          drag
+          dragControls={dragControls}
+          dragListener={false}
+          dragMomentum={false}
+          dragElastic={0}
           className="fixed bottom-0 right-0 z-50 w-full sm:w-[450px] sm:right-10 h-[600px] max-h-[80vh] bg-white border-2 border-editorial-text shadow-[-8px_-8px_0px_0px_rgba(26,26,26,0.1)] flex flex-col"
         >
           {/* Header */}
-          <div className="flex items-center justify-between p-4 border-b-2 border-editorial-text bg-editorial-text text-white">
+          <div 
+            onPointerDown={(e) => dragControls.start(e)} 
+            className="flex items-center justify-between p-4 border-b-2 border-editorial-text bg-editorial-text text-white cursor-grab active:cursor-grabbing select-none shrink-0"
+          >
             <div className="flex items-center gap-3">
               <Sparkles size={18} className="text-yellow-400" />
               <div>
@@ -100,6 +180,7 @@ export const ChatWindow = React.memo(function ChatWindow({ isOpen, onClose, sour
             </div>
             <button
               onClick={onClose}
+              onPointerDown={(e) => e.stopPropagation()}
               className="p-1 hover:bg-white/20 rounded transition-colors text-white"
             >
               <X size={20} />
@@ -129,7 +210,7 @@ export const ChatWindow = React.memo(function ChatWindow({ isOpen, onClose, sour
                   </div>
                   <div className={`rounded p-3 ${msg.role === 'user' ? 'bg-gray-200 text-gray-900' : 'bg-white border border-gray-200 shadow-sm text-gray-800'}`}>
                     <div className="text-[13px] leading-relaxed markdown-body">
-                      <Markdown>{msg.content}</Markdown>
+                      <AEMarkdown>{msg.content}</AEMarkdown>
                     </div>
                   </div>
                 </div>
@@ -149,12 +230,26 @@ export const ChatWindow = React.memo(function ChatWindow({ isOpen, onClose, sour
             ))}
             
             {isLoading && (
-              <div className="flex gap-3 flex-row">
+              <div className="flex gap-3 flex-row items-start">
                 <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 bg-editorial-text text-white">
                   <Bot size={14} />
                 </div>
-                <div className="max-w-[80%] rounded p-3 bg-white border border-gray-200 shadow-sm">
-                  <Loader2 size={16} className="animate-spin text-editorial-text" />
+                <div className="max-w-[80%] rounded p-3 bg-white border border-gray-200 shadow-sm flex flex-col gap-2">
+                  <div className="flex items-center gap-2">
+                    <Loader2 size={14} className="animate-spin text-editorial-text" />
+                    <span className="text-xs text-gray-500 font-serif italic">Агент пишет ответ...</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (abortControllerRef.current) {
+                        abortControllerRef.current.abort();
+                      }
+                    }}
+                    className="self-start text-[9px] uppercase font-bold text-red-500 hover:text-red-700 transition-colors uppercase tracking-wider"
+                  >
+                    Прервать
+                  </button>
                 </div>
               </div>
             )}

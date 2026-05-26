@@ -1,0 +1,1 @@
+---\nid: prompt-engineering-patterns\nname: Prompt Patterns\ndescription: Высокоуровневые паттерны промпт инжиниринга.\nbadge: Код\nicon: PenTool\n---\n\n# Prompt Patterns\n\nВысокоуровневые паттерны промпт инжиниринга.\n

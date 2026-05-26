@@ -1,0 +1,1 @@
+---\nid: docs-architect\nname: Docs Architect\ndescription: Выстраивание строгой информационной архитектуры в документации.\nbadge: Код\nicon: FileSpreadsheet\n---\n\n# Docs Architect\n\nВыстраивание строгой информационной архитектуры в документации.\n

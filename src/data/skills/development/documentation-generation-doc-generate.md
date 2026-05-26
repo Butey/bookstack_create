@@ -1,0 +1,1 @@
+---\nid: documentation-generation-doc-generate\nname: Doc Gen\ndescription: Автоматическая генерация документации на лету.\nbadge: Код\nicon: FileText\n---\n\n# Doc Gen\n\nАвтоматическая генерация документации на лету.\n

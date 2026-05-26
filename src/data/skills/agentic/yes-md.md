@@ -1,0 +1,1 @@
+---\nid: yes-md\nname: Yes Markdown\ndescription: Форсированное и исключительно чистое MD-форматирование.\nbadge: Код\nicon: FileSpreadsheet\n---\n\n# Yes Markdown\n\nФорсированное и исключительно чистое MD-форматирование.\n

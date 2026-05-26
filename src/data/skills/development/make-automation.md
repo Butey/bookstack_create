@@ -1,0 +1,1 @@
+---\nid: make-automation\nname: Make.com Automation\ndescription: Спецификация интеграций и сценариев для Make.com.\nbadge: Код\nicon: Cpu\n---\n\n# Make.com Automation\n\nСпецификация интеграций и сценариев для Make.com.\n

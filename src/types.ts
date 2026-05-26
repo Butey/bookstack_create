@@ -48,6 +48,7 @@ export interface ProcessedArticle {
   content: string;
   thinking: string;
   markdown?: string;
+  description?: string;
   targetPublishMode: 'create' | 'update';
   targetPublishPageId: number | null;
   targetPublishBookId: number | null;

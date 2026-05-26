@@ -34,6 +34,7 @@ export function useAgentActions(params: {
   setIsConsoleOpen: any,
   setRagConfirmation: any,
   setMindmapData: any,
+  setMermaidData?: any,
   executionControl: {
     abortControllerRef: MutableRefObject<AbortController | null>;
     checkPauseAndAbort: () => Promise<void>;
@@ -45,7 +46,8 @@ export function useAgentActions(params: {
   loadChapterPages: any,
   loadChaptersAndPages: any,
   setSelectedBookId: any,
-  setSelectedPageId: any
+  setSelectedPageId: any,
+  activeSkills?: Record<string, boolean>
 }) {
 
   const executePublishing = async (processed: ProcessedArticle) => {
@@ -108,7 +110,8 @@ export function useAgentActions(params: {
           activeChapterId,
           processed.title,
           processed.markdown,
-          finalTags
+          finalTags,
+          processed.description
         );
         pageUrl = createRes?.url || '';
         if (createRes?.id) {
@@ -129,7 +132,8 @@ export function useAgentActions(params: {
           publishPageId,
           processed.title,
           processed.markdown,
-          finalTags
+          finalTags,
+          processed.description
         );
         pageUrl = updateRes?.url || '';
         try {
@@ -236,7 +240,8 @@ export function useAgentActions(params: {
         checkPause: params.executionControl.checkPauseAndAbort,
         onProgress: (msg) => params.executionControl.setSyncStatus({ type: 'idle', message: msg }),
         systemInstruction: params.systemInstruction,
-        dataStructure: params.dataStructure
+        dataStructure: params.dataStructure,
+        activeSkills: params.activeSkills
       },
       allAttachments
     );
@@ -301,6 +306,7 @@ export function useAgentActions(params: {
       return;
     }
 
+    setIsConsoleOpen(true);
     executionControl.startTask({ step: 1, total: 3, label: 'Подготовка данных и структуры' });
     setChatHistory([]); 
 
@@ -514,12 +520,52 @@ export function useAgentActions(params: {
     }
   };
 
+  const handleGenerateMermaid = async () => {
+    const { sources, content, geminiModel, executionControl, setMermaidData } = params;
+
+    if (sources.length === 0 && !content.trim()) {
+      executionControl.setSyncStatus({ type: 'error', message: 'Предоставьте хотя бы один источник или текст.' });
+      return;
+    }
+    
+    executionControl.startTask({ step: 1, total: 1, label: 'Генерация диаграммы Mermaid...' });
+    
+    try {
+      const allSourcesText = sources.filter(s => s.selected !== false).map(s => `--- ${s.name} ---\n${s.content}\n\n`).join('');
+      const combinedContent = `${allSourcesText}\n\n${content}`;
+      
+      const { generateMermaid } = await import('../services/gemini');
+      const rawCode = await generateMermaid(combinedContent, geminiModel, {
+        signal: executionControl.abortControllerRef.current?.signal,
+        checkPause: executionControl.checkPauseAndAbort
+      });
+
+      let cleanedCode = rawCode;
+      const match = rawCode.match(/```mermaid([\s\S]*?)```/);
+      if (match && match[1]) {
+        cleanedCode = match[1].trim();
+      } else {
+        cleanedCode = rawCode.replace(/```mermaid/g, '').replace(/```/g, '').trim();
+      }
+      
+      if (setMermaidData) {
+        setMermaidData({ code: cleanedCode });
+      }
+      executionControl.setSyncStatus({ type: 'success', message: 'Диаграмма Mermaid готова!' });
+    } catch (e: any) {
+      executionControl.setSyncStatus({ type: 'error', message: e.message || 'Ошибка генерации диаграммы.' });
+    } finally {
+      executionControl.setIsSyncing(false);
+    }
+  };
+
   return {
     handleSync,
     confirmAndPublish,
     handleRefinement,
     handleGenerateMindmap,
     handleGenerateFAQ,
+    handleGenerateMermaid,
     handleRagChoice
   };
 }

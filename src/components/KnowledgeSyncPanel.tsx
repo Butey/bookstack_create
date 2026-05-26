@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'motion/react';
-import { Send, Loader2, CheckCircle, AlertCircle } from 'lucide-react';
+import { Send, Loader2, CheckCircle, AlertCircle, HelpCircle } from 'lucide-react';
 import { BookStackBook, BookStackChapter, BookStackPage } from '../types';
 
 interface KnowledgeSyncPanelProps {
@@ -30,6 +30,7 @@ interface KnowledgeSyncPanelProps {
   contentLength: number;
   handleGenerateMindmap: () => void;
   handleGenerateFAQ: () => void;
+  handleGenerateMermaid: () => void;
   setIsConfigOpen: (v: boolean) => void;
 }
 
@@ -42,7 +43,7 @@ export function KnowledgeSyncPanel({
   books, chapters, pages,
   isLoadingBooks, isLoadingChapters, isLoadingPages,
   handleSync, executionControl, sourcesLength, contentLength,
-  handleGenerateMindmap, handleGenerateFAQ, setIsConfigOpen
+  handleGenerateMindmap, handleGenerateFAQ, handleGenerateMermaid, setIsConfigOpen
 }: KnowledgeSyncPanelProps) {
   return (
     <div className="lg:col-span-4 flex flex-col gap-10">
@@ -197,21 +198,45 @@ export function KnowledgeSyncPanel({
         </div>
       </div>
 
-      <div className="flex gap-2">
+      <div className="grid grid-cols-3 gap-2">
         <button
           onClick={handleGenerateMindmap}
           disabled={executionControl.isSyncing || (sourcesLength === 0 && contentLength === 0)}
-          className="flex-1 py-3 bg-white border-2 border-editorial-text shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] hover:shadow-none hover:translate-x-[2px] hover:translate-y-[2px] transition-all text-[10px] uppercase font-bold text-gray-800 disabled:opacity-50 disabled:cursor-not-allowed"
+          className="py-3 bg-white border-2 border-editorial-text shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] hover:shadow-none hover:translate-x-[2px] hover:translate-y-[2px] transition-all text-[9px] uppercase font-bold text-gray-800 disabled:opacity-50 disabled:cursor-not-allowed text-center px-1"
+          title="Создать Mindmap"
         >
-          Создать Mindmap
+          Mindmap
         </button>
         <button
           onClick={handleGenerateFAQ}
           disabled={executionControl.isSyncing || (sourcesLength === 0 && contentLength === 0)}
-          className="flex-1 py-3 bg-white border-2 border-editorial-text shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] hover:shadow-none hover:translate-x-[2px] hover:translate-y-[2px] transition-all text-[10px] uppercase font-bold text-gray-800 disabled:opacity-50 disabled:cursor-not-allowed"
+          className="py-3 bg-white border-2 border-editorial-text shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] hover:shadow-none hover:translate-x-[2px] hover:translate-y-[2px] transition-all text-[9px] uppercase font-bold text-gray-800 disabled:opacity-50 disabled:cursor-not-allowed text-center px-1"
+          title="Сгенерировать FAQ"
         >
-          Сгенерировать FAQ
+          FAQ
         </button>
+        <button
+          onClick={handleGenerateMermaid}
+          disabled={executionControl.isSyncing || (sourcesLength === 0 && contentLength === 0)}
+          className="py-3 bg-white border-2 border-editorial-text shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] hover:shadow-none hover:translate-x-[2px] hover:translate-y-[2px] transition-all text-[9px] uppercase font-bold text-gray-800 disabled:opacity-50 disabled:cursor-not-allowed text-center px-1"
+          title="Сгенерировать схему Mermaid"
+        >
+          Схема Mermaid
+        </button>
+      </div>
+
+      {/* Справка Mindmap vs Mermaid */}
+      <div className="bg-[#FAF9F6] border-2 border-editorial-text p-4 text-[10.5px] space-y-2.5 leading-relaxed shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]">
+        <div className="flex items-center gap-1.5 font-bold uppercase tracking-widest text-editorial-text mb-1">
+          <HelpCircle size={14} className="text-editorial-text shrink-0" />
+          Разница: Mindmap vs Mermaid
+        </div>
+        <p className="text-gray-700">
+          <strong>Mindmap (Интеллект-карта)</strong> — это древовидная или радиальная схема ассоциаций. Она организует ключевые сущности, темы и понятия из источников вокруг единой центральной идеи. Идеально подходит для конспектирования, структурирования сложных понятий и брейншторминга.
+        </p>
+        <p className="text-gray-700">
+          <strong>Схема Mermaid</strong> — это структурированная блок-схема процесса, алгоритма или последовательности логических шагов. Позволяет графически запечатлеть связи вида «Объект A ➔ Направление / Решение ➔ Объект Б». Идеально для технического моделирования, инструкций поддержки (Symptom ➔ Fix) и системных архитектур.
+        </p>
       </div>
 
       <div className="p-8 border-2 border-editorial-text border-dashed bg-white/30">

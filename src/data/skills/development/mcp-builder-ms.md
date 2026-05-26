@@ -1,0 +1,1 @@
+---\nid: mcp-builder-ms\nname: MCP Microservices\ndescription: Проектирование микросервисной архитектуры на протоколе MCP.\nbadge: Код\nicon: Cpu\n---\n\n# MCP Microservices\n\nПроектирование микросервисной архитектуры на протоколе MCP.\n
