@@ -8,7 +8,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect, DragEvent } from 'react';
+import { useState, useEffect, DragEvent, useMemo } from 'react';
+import axios from 'axios';
 import { BookStackCredentials, OmnideskCredentials, ProcessedArticle, Source } from './types';
 import { GEMINI_MODELS, DEFAULT_MODEL, GeminiModelId, analyzeLogsDirectly } from './services/gemini';
 import { ChatWindow } from './components/ChatWindow';
@@ -30,6 +31,14 @@ import { useBookStackSync } from './hooks/useBookStackSync';
 export default function App() {
   const executionControl = useExecutionControl();
   
+  // Generate a transient session ID that resets on page refresh
+  const sessionId = useMemo(() => Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15), []);
+
+  useEffect(() => {
+    // Set session ID header for all outgoing requests
+    axios.defaults.headers.common['X-Session-Id'] = sessionId;
+  }, [sessionId]);
+
   const [isSettingsLoaded, setIsSettingsLoaded] = useState(false);
   const [sources, setSources] = useState<Source[]>([]);
   const [workMode, setWorkMode] = useState<'auto' | 'review'>('auto');
@@ -117,7 +126,9 @@ export default function App() {
       }
       setOmnideskCreds(omnideskCredsToSet);
 
-      if (settingsData.bookstack_sources) setSources(settingsData.bookstack_sources);
+      // We do NOT load bookstack_sources from server because they should be reset on refresh
+      // if (settingsData.bookstack_sources) setSources(settingsData.bookstack_sources);
+      
       if (settingsData.agent_work_mode) setWorkMode(settingsData.agent_work_mode);
       if (settingsData.agent_data_structure) setDataStructure(settingsData.agent_data_structure);
       if (settingsData.agent_system_instruction) setSystemInstruction(settingsData.agent_system_instruction);
@@ -367,6 +378,7 @@ root_cause_category: "[Category]"
   ]
 }`);
   const [geminiModel, setGeminiModel] = useState<GeminiModelId>(DEFAULT_MODEL);
+  const [pdfExtractionMode, setPdfExtractionMode] = useState<'gemini' | 'markitdown'>('markitdown');
 
   const { uploadProgress, isDragging, setIsDragging, processFiles, handleSpecialFileUpload } = useFileUpload(
     geminiModel,
@@ -374,7 +386,8 @@ root_cause_category: "[Category]"
     setSystemInstruction,
     setDataStructure,
     executionControl,
-    activeSkills
+    activeSkills,
+    pdfExtractionMode
   );
 
   const { handleSync, confirmAndPublish, handleRefinement, handleGenerateMindmap, handleGenerateFAQ, handleGenerateMermaid, handleRagChoice } = useAgentActions({
@@ -432,10 +445,11 @@ root_cause_category: "[Category]"
       fetch('/api/settings', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'X-Session-Id': sessionId // Ensure header is present even for fetch
         },
         body: JSON.stringify({
-          bookstack_sources: sources,
+          // bookstack_sources is intentionally omitted for isolation and reset requirement
           agent_work_mode: workMode,
           agent_data_structure: dataStructure,
           agent_system_instruction: systemInstruction,
@@ -452,16 +466,17 @@ root_cause_category: "[Category]"
     }, 1000);
 
     return () => clearTimeout(timer);
-  }, [sources, workMode, dataStructure, systemInstruction, searchPrompt, duplicatePrompt, contextPrompt, activeSkills, defaultActiveSkills, geminiModel, customPresets, selectedPreset, isSettingsLoaded]);
+  }, [sources, workMode, dataStructure, systemInstruction, searchPrompt, duplicatePrompt, contextPrompt, activeSkills, defaultActiveSkills, geminiModel, customPresets, selectedPreset, isSettingsLoaded, sessionId]);
 
   const forceSaveSettings = () => {
     fetch('/api/settings', {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'X-Session-Id': sessionId
       },
       body: JSON.stringify({
-        bookstack_sources: sources,
+        // bookstack_sources is intentionally omitted
         agent_work_mode: workMode,
         agent_data_structure: dataStructure,
         agent_system_instruction: systemInstruction,
@@ -523,6 +538,8 @@ root_cause_category: "[Category]"
             onSaveSettings={forceSaveSettings}
             isConfigOpen={isConfigOpen}
             setIsConfigOpen={setIsConfigOpen}
+            pdfExtractionMode={pdfExtractionMode}
+            setPdfExtractionMode={setPdfExtractionMode}
             systemInstruction={systemInstruction}
             setSystemInstruction={setSystemInstruction}
             dataStructure={dataStructure}

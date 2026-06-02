@@ -24,6 +24,7 @@
     "express": "^4.21.2",
     "jsdom": "^29.1.0",
     "lucide-react": "^0.546.0",
+    "markitdown": "github:Butey/markitdown",
     "mermaid": "^11.15.0",
     "motion": "^12.23.24",
     "multer": "^2.1.1",

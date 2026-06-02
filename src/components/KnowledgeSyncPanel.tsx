@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'motion/react';
-import { Send, Loader2, CheckCircle, AlertCircle, HelpCircle } from 'lucide-react';
+import { Send, Loader2, CheckCircle, AlertCircle, HelpCircle, Book, Layers, ChevronRight } from 'lucide-react';
 import { BookStackBook, BookStackChapter, BookStackPage } from '../types';
 
 interface KnowledgeSyncPanelProps {
@@ -48,6 +48,18 @@ export function KnowledgeSyncPanel({
   executionControl, sourcesLength, contentLength,
   handleGenerateMindmap, handleGenerateFAQ, handleGenerateMermaid, setIsConfigOpen
 }: KnowledgeSyncPanelProps) {
+  const bookName = selectedBookId 
+    ? books.find(b => b.id === selectedBookId)?.name 
+    : 'Автоматический выбор';
+    
+  const chapterName = selectedChapterId 
+    ? chapters.find(c => c.id === selectedChapterId)?.name 
+    : (selectedBookId ? 'Корень книги' : null);
+    
+  const pageName = selectedPageId 
+    ? pages.find(p => p.id === selectedPageId)?.name 
+    : (targetMode === 'update' ? null : null);
+
   return (
     <div className="lg:col-span-4 flex flex-col gap-10">
       <div className="space-y-6">
@@ -146,6 +158,26 @@ export function KnowledgeSyncPanel({
                 onChange={(e) => setCustomTags(e.target.value)}
                 placeholder="Например: AI, 2024"
               />
+            </div>
+          </div>
+
+          <div className="p-3 bg-gray-50 border border-dashed border-gray-200 rounded-[2px] transition-all">
+            <div className="text-[9px] font-bold uppercase tracking-widest text-gray-400 mb-2 flex items-center gap-1.5">
+              <Layers size={10} />
+              Маршрут публикации
+            </div>
+            <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-bold uppercase tracking-tight leading-tight">
+              <span className="text-editorial-text truncate max-w-[120px]" title={bookName}>{bookName}</span>
+              <ChevronRight size={10} className="text-gray-300" />
+              {chapterName && (
+                <>
+                  <span className="text-editorial-text truncate max-w-[120px]" title={chapterName}>{chapterName}</span>
+                  <ChevronRight size={10} className="text-gray-300" />
+                </>
+              )}
+              <span className={targetMode === 'create' ? 'text-green-600' : 'text-blue-600'}>
+                {targetMode === 'create' ? 'Новая статья' : (pageName || 'Статья не выбрана')}
+              </span>
             </div>
           </div>
 

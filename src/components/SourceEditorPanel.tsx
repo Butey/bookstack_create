@@ -45,6 +45,8 @@ interface SourceEditorPanelProps {
   setIsDragging: (v: boolean) => void;
   setPreviewSource: (v: any) => void;
   uploadProgress: { percent: number; label: string } | null;
+  pdfExtractionMode: 'gemini' | 'markitdown';
+  setPdfExtractionMode: (v: 'gemini' | 'markitdown') => void;
 
   // SourceEditor Props
   executionControl: any;
@@ -102,6 +104,8 @@ export function SourceEditorPanel(props: SourceEditorPanelProps) {
           setIsDragging={props.setIsDragging}
           setPreviewSource={props.setPreviewSource}
           uploadProgress={props.uploadProgress}
+          pdfExtractionMode={props.pdfExtractionMode}
+          setPdfExtractionMode={props.setPdfExtractionMode}
         />
 
         <div className="flex bg-white border-2 border-editorial-text shadow-[4px_4px_0px_0px_rgba(26,26,26,1)] h-12 overflow-hidden">

@@ -13,6 +13,8 @@ interface WorkspacePanelProps {
   setIsDragging: (val: boolean) => void;
   setPreviewSource: (val: {name: string, content: string} | null) => void;
   uploadProgress: { percent: number; label: string } | null;
+  pdfExtractionMode: 'gemini' | 'markitdown';
+  setPdfExtractionMode: (val: 'gemini' | 'markitdown') => void;
 }
 
 export const WorkspacePanel = React.memo(function WorkspacePanel({
@@ -22,7 +24,9 @@ export const WorkspacePanel = React.memo(function WorkspacePanel({
   isDragging,
   setIsDragging,
   setPreviewSource,
-  uploadProgress
+  uploadProgress,
+  pdfExtractionMode,
+  setPdfExtractionMode
 }: WorkspacePanelProps) {
 
   const totalChars = sources.reduce((acc, s) => s.selected !== false ? acc + (s.content?.length || 0) : acc, 0);
@@ -72,7 +76,7 @@ export const WorkspacePanel = React.memo(function WorkspacePanel({
         <div className="flex justify-between items-end">
           <div className="space-y-1">
             <h2 className="font-serif text-3xl italic tracking-tight">Рабочее пространство</h2>
-            <p className="text-sm text-gray-500 max-w-lg">Синтез знаний. Перетащите PDF, HTML или текстовые источники ниже.</p>
+            <p className="text-sm text-gray-500 max-w-lg">Синтез знаний. Перетащите PDF, DOCX, XLSX, PPTX, HTML или текстовые источники ниже.</p>
           </div>
           <label className="flex items-center gap-2 px-4 py-2 border-2 border-editorial-text cursor-pointer hover:bg-[#1A1A1A] hover:text-white transition-all text-[10px] font-bold uppercase tracking-widest">
             <ExternalLink size={12} />
@@ -81,7 +85,7 @@ export const WorkspacePanel = React.memo(function WorkspacePanel({
               type="file" 
               className="hidden" 
               multiple 
-              accept=".txt,.md,.pdf,.html"
+              accept=".txt,.md,.pdf,.html,.htm,.docx,.xlsx,.xls,.pptx,.csv,.epub"
               onChange={(e) => {
                 if (e.target.files) {
                   processFiles(Array.from(e.target.files));
@@ -89,6 +93,36 @@ export const WorkspacePanel = React.memo(function WorkspacePanel({
               }} 
             />
           </label>
+        </div>
+
+        {/* Выбор метода извлечения текста */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 bg-white border-2 border-editorial-text shadow-[4px_4px_0px_0px_rgba(26,26,26,1)]">
+          <div className="space-y-1">
+            <span className="text-[10px] font-bold uppercase tracking-widest text-[#8E8E8A] block">Режим конвертации документов</span>
+            <span className="text-xs text-editorial-text leading-tight">Локальный конвертер MarkItDown работает офлайн и не тратит лимиты модели.</span>
+          </div>
+          <div className="flex bg-[#F5F5F3] border-2 border-editorial-text p-1 shrink-0">
+            <button
+              onClick={() => setPdfExtractionMode('markitdown')}
+              className={`px-3 py-1.5 text-[9px] font-bold uppercase tracking-widest transition-all cursor-pointer ${
+                pdfExtractionMode === 'markitdown'
+                  ? 'bg-editorial-text text-white'
+                  : 'text-editorial-text hover:bg-gray-200'
+              }`}
+            >
+              MarkItDown (Локально)
+            </button>
+            <button
+              onClick={() => setPdfExtractionMode('gemini')}
+              className={`px-3 py-1.5 text-[9px] font-bold uppercase tracking-widest transition-all cursor-pointer ${
+                pdfExtractionMode === 'gemini'
+                  ? 'bg-editorial-text text-white'
+                  : 'text-editorial-text hover:bg-gray-200'
+              }`}
+            >
+              Gemini OCR (ИИ)
+            </button>
+          </div>
         </div>
 
         <div 

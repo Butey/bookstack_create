@@ -12,35 +12,14 @@ export interface VectorDocument {
 const DB_PATH = path.join(process.cwd(), '.data', 'vector_store.json');
 
 export class VectorStore {
-  private documents: VectorDocument[] = [];
+  private sessionDocuments: Record<string, VectorDocument[]> = {};
 
   constructor() {
-    this.load();
-  }
-
-  private load() {
-    try {
-      if (fs.existsSync(DB_PATH)) {
-        const data = fs.readFileSync(DB_PATH, 'utf-8');
-        this.documents = JSON.parse(data);
-      } else {
-        // Ensure dir exists
-        fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
-        this.documents = [];
-      }
-    } catch (e) {
-      console.error('Failed to load vector store', e);
-      this.documents = [];
-    }
+    // No longer loading from disk for session isolation + "reset on refresh" requirement
   }
 
   private save() {
-    try {
-      fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
-      fs.writeFileSync(DB_PATH, JSON.stringify(this.documents));
-    } catch (e) {
-      console.error('Failed to save vector store', e);
-    }
+    // No longer saving to disk
   }
 
   private async getEmbedding(text: string, apiKey: string): Promise<number[]> {
@@ -72,23 +51,32 @@ export class VectorStore {
     return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
   }
 
-  public async addDocument(id: string, text: string, metadata: any = {}, apiKey: string) {
-    const embedding = await this.getEmbedding(text, apiKey);
-    const existingIndex = this.documents.findIndex(d => d.id === id);
-    if (existingIndex >= 0) {
-      this.documents[existingIndex] = { id, text, metadata, embedding };
-    } else {
-      this.documents.push({ id, text, metadata, embedding });
+  public async addDocument(sessionId: string, id: string, text: string, metadata: any = {}, apiKey: string) {
+    if (!sessionId) sessionId = 'default';
+    if (!this.sessionDocuments[sessionId]) {
+      this.sessionDocuments[sessionId] = [];
     }
-    this.save();
+
+    const embedding = await this.getEmbedding(text, apiKey);
+    const docs = this.sessionDocuments[sessionId];
+    const existingIndex = docs.findIndex(d => d.id === id);
+    
+    if (existingIndex >= 0) {
+      docs[existingIndex] = { id, text, metadata, embedding };
+    } else {
+      docs.push({ id, text, metadata, embedding });
+    }
   }
 
-  public async search(query: string, limit: number = 5, apiKey: string): Promise<Array<VectorDocument & { score: number }>> {
-    if (this.documents.length === 0) return [];
+  public async search(sessionId: string, query: string, limit: number = 5, apiKey: string): Promise<Array<VectorDocument & { score: number }>> {
+    if (!sessionId) sessionId = 'default';
+    const docs = this.sessionDocuments[sessionId] || [];
+    
+    if (docs.length === 0) return [];
     
     const queryEmbedding = await this.getEmbedding(query, apiKey);
     
-    const results = this.documents.map(doc => {
+    const results = docs.map(doc => {
       const score = this.cosineSimilarity(queryEmbedding, doc.embedding);
       return { ...doc, score };
     });
@@ -97,8 +85,9 @@ export class VectorStore {
     return results.slice(0, limit);
   }
 
-  public getDocumentsCount() {
-    return this.documents.length;
+  public getDocumentsCount(sessionId: string) {
+    if (!sessionId) sessionId = 'default';
+    return this.sessionDocuments[sessionId]?.length || 0;
   }
 }
 

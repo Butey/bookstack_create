@@ -1,5 +1,7 @@
 import { Request, Response } from 'express';
 import { createRequire } from 'module';
+import path from 'path';
+import { MarkItDown } from 'markitdown';
 
 const require = createRequire(import.meta.url);
 const pdf = require('pdf-parse');
@@ -14,16 +16,18 @@ export class ApiController {
   private geminiService = new GeminiService();
   private bookStackService = new BookStackService();
   private omnideskService = new OmnideskService();
+  private markItDown = new MarkItDown();
 
   public indexVectorDocument = async (req: Request, res: Response): Promise<any> => {
     try {
+      const sessionId = req.headers['x-session-id'] as string || 'default';
       const { id, text, metadata } = req.body;
       if (!id || !text) return res.status(400).json({ error: 'id and text are required' });
       const settings = this.settingsService.getSettings();
       const apiKey = settings.geminiApiKey || process.env.GEMINI_API_KEY;
       if (!apiKey) return res.status(500).json({ error: 'GEMINI_API_KEY not found' });
-      await vectorStore.addDocument(id, text, metadata, apiKey);
-      res.json({ success: true, count: vectorStore.getDocumentsCount() });
+      await vectorStore.addDocument(sessionId, id, text, metadata, apiKey);
+      res.json({ success: true, count: vectorStore.getDocumentsCount(sessionId) });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -31,12 +35,13 @@ export class ApiController {
 
   public searchVectorStore = async (req: Request, res: Response): Promise<any> => {
     try {
+      const sessionId = req.headers['x-session-id'] as string || 'default';
       const { query, limit } = req.body;
       if (!query) return res.status(400).json({ error: 'query is required' });
       const settings = this.settingsService.getSettings();
       const apiKey = settings.geminiApiKey || process.env.GEMINI_API_KEY;
       if (!apiKey) return res.status(500).json({ error: 'GEMINI_API_KEY not found' });
-      const results = await vectorStore.search(query, parseInt(limit as string) || 5, apiKey);
+      const results = await vectorStore.search(sessionId, query, parseInt(limit as string) || 5, apiKey);
       const safeResults = results.map(r => ({ id: r.id, text: r.text, metadata: r.metadata, score: r.score }));
       res.json({ results: safeResults });
     } catch (e: any) {
@@ -45,7 +50,8 @@ export class ApiController {
   };
 
   public getVectorStoreStats = async (req: Request, res: Response): Promise<any> => {
-    res.json({ count: vectorStore.getDocumentsCount() });
+    const sessionId = req.headers['x-session-id'] as string || 'default';
+    res.json({ count: vectorStore.getDocumentsCount(sessionId) });
   };
 
   public checkHealth = (req: Request, res: Response): void => {
@@ -114,6 +120,7 @@ export class ApiController {
     try {
       const file = req.file;
       const text = req.body.text || '';
+      const useMarkItDown = req.body.useMarkItDown === 'true' || req.body.useMarkItDown === true;
       
       if (file) {
         let name = file.originalname;
@@ -123,12 +130,30 @@ export class ApiController {
           // Fallback to original
         }
 
+        let markitdownText = '';
+        let isParsedLocally = false;
+
+        if (useMarkItDown) {
+          try {
+            const ext = path.extname(name).toLowerCase();
+            const conversionResult = await this.markItDown.convert(file.buffer, {
+              fileExtension: ext
+            });
+            if (conversionResult && conversionResult.markdown !== undefined) {
+              markitdownText = conversionResult.markdown;
+              isParsedLocally = true;
+            }
+          } catch (midError: any) {
+            console.error('Failed to parse file with MarkItDown:', midError);
+          }
+        }
+
         let metadata = {};
         if (file.mimetype === 'application/pdf') {
           try {
             const data = await pdf(file.buffer);
             if (data.info) {
-              let creationDate = data.info.CreationDate || '';
+               let creationDate = data.info.CreationDate || '';
               // Format D:20240212153022Z+03'00' -> 12.02.2024
               if (creationDate.startsWith('D:')) {
                 const match = creationDate.match(/^D:(\d{4})(\d{2})(\d{2})/);
@@ -152,7 +177,9 @@ export class ApiController {
           base64: file.buffer.toString('base64'), 
           mimeType: file.mimetype,
           name,
-          metadata
+          metadata,
+          markitdownText,
+          isParsedLocally
         });
       }
       

@@ -15,7 +15,8 @@ export function useFileUpload(
     startTask: (steps: { step: number; total: number; label: string }) => void;
     setSyncStatus: React.Dispatch<React.SetStateAction<{ type: "success" | "error" | "idle"; message: string; url?: string | undefined; }>>;
   },
-  activeSkills: Record<string, boolean>
+  activeSkills: Record<string, boolean>,
+  pdfExtractionMode: 'gemini' | 'markitdown'
 ) {
   const [uploadProgress, setUploadProgress] = useState<{ percent: number, label: string } | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -39,6 +40,7 @@ export function useFileUpload(
         await executionControl.checkPauseAndAbort();
         const formData = new FormData();
         formData.append('file', file);
+        formData.append('useMarkItDown', String(pdfExtractionMode === 'markitdown'));
         
         const response = await axios.post('/api/process-source', formData, {
           headers: { 'Content-Type': 'multipart/form-data' },
@@ -59,16 +61,24 @@ export function useFileUpload(
         const base64Str = response.data.base64;
         const mimeType = response.data.mimeType || file.type || 'text/plain';
         const metadata = response.data.metadata;
+        const markitdownText = response.data.markitdownText;
+        const isParsedLocally = response.data.isParsedLocally;
         
-        const extractionStartPercent = basePercent + (totalWeightPerFile * 0.5);
-        setUploadProgress({ percent: Math.round(extractionStartPercent), label: `${prefix}Агент читает текст...` });
-        executionControl.setSyncStatus({ type: 'idle', message: `${prefix}Агент извлекает текст из ${file.name}...` });
-        
-        const extractedText = await extractTextFromFile(base64Str, mimeType, geminiModel, {
-          signal: executionControl.abortControllerRef.current?.signal,
-          checkPause: executionControl.checkPauseAndAbort,
-          activeSkills
-        });
+        let extractedText = '';
+        if (isParsedLocally && markitdownText) {
+          extractedText = markitdownText;
+          setUploadProgress({ percent: Math.round(basePercent + totalWeightPerFile), label: `${prefix}Распознано локально (MarkItDown)` });
+        } else {
+          const extractionStartPercent = basePercent + (totalWeightPerFile * 0.5);
+          setUploadProgress({ percent: Math.round(extractionStartPercent), label: `${prefix}Агент читает текст...` });
+          executionControl.setSyncStatus({ type: 'idle', message: `${prefix}Агент извлекает текст из ${file.name}...` });
+          
+          extractedText = await extractTextFromFile(base64Str, mimeType, geminiModel, {
+            signal: executionControl.abortControllerRef.current?.signal,
+            checkPause: executionControl.checkPauseAndAbort,
+            activeSkills
+          });
+        }
         
         const attachList = [];
         if (mimeType.startsWith('image/') || mimeType === 'application/pdf') {
@@ -103,7 +113,7 @@ export function useFileUpload(
     }
     
     setTimeout(() => setUploadProgress(null), 1000);
-  }, [geminiModel, setSources, executionControl, activeSkills]);
+  }, [geminiModel, setSources, executionControl, activeSkills, pdfExtractionMode]);
 
   const handleSpecialFileUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>, target: 'system' | 'structure') => {
     const file = e.target.files?.[0];
