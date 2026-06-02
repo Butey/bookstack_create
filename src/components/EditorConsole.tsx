@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   X,
@@ -16,7 +16,9 @@ import {
   Brain,
   MessageSquare,
   Info,
-  FileText
+  FileText,
+  SplitSquareHorizontal,
+  CheckCircle
 } from 'lucide-react';
 import { AEMarkdown } from './AEMarkdown';
 import { ProcessedArticle } from '../types';
@@ -66,6 +68,8 @@ export const EditorConsole = React.memo(function EditorConsole({
   setSyncStatus,
   books
 }: EditorConsoleProps) {
+  const [diffMode, setDiffMode] = useState(false);
+  
   return (
     <AnimatePresence>
       {isConsoleOpen && (
@@ -153,6 +157,26 @@ export const EditorConsole = React.memo(function EditorConsole({
                   <h3 className="font-serif font-bold animate-bounce">Агент анализирует...</h3>
                   <p className="text-[10px] uppercase tracking-widest text-editorial-text/60 mt-2">Идет процесс сопоставления источников и выбора целевого места в Wiki</p>
                 </div>
+              ) : syncStatus.type === 'error' ? (
+                <div className="h-full flex flex-col items-center justify-center p-12 text-center">
+                  <AlertCircle size={48} className="text-red-500 mb-6" />
+                  <h3 className="font-serif font-bold text-red-600">Ошибка выполнения</h3>
+                  <p className="text-[10px] uppercase tracking-widest text-red-500 mt-2">
+                    {syncStatus.message.replace('[QUOTA_EXCEEDED]', '').replace('[INVALID_MODEL]', '').trim()}
+                  </p>
+                  {(syncStatus.message.includes('[QUOTA_EXCEEDED]') || syncStatus.message.includes('[INVALID_MODEL]')) && (
+                     <div className="mt-4 p-3 bg-red-50 border border-red-200">
+                        <span className="text-[10px] font-bold uppercase text-red-700">Внимание: Требуется сменить ИИ-модель</span>
+                        <p className="text-xs text-red-600 mt-1">Закройте эту консоль и выберите другую модель в панели управления.</p>
+                     </div>
+                  )}
+                  <button 
+                    onClick={() => setIsConsoleOpen(false)}
+                    className="mt-6 py-2 px-6 bg-white border-2 border-editorial-text text-[10px] font-bold uppercase tracking-widest hover:bg-gray-50 transition-colors"
+                  >
+                    Закрыть консоль
+                  </button>
+                </div>
               ) : lastResponse ? (
                 <div className="p-8 space-y-10">
                   {/* Thinking/Reasoning */}
@@ -169,13 +193,42 @@ export const EditorConsole = React.memo(function EditorConsole({
                   {/* Article Draft Preview */}
                   {lastResponse.markdown && (
                     <section>
-                      <div className="flex items-center gap-2 mb-4">
-                        <FileText size={16} className="text-editorial-text" />
-                        <h3 className="text-[11px] font-bold uppercase tracking-[0.2em] text-editorial-text">Черновик статьи (с поддержкой Mermaid)</h3>
+                      <div className="flex items-center justify-between mb-4">
+                        <div className="flex items-center gap-2">
+                          <FileText size={16} className="text-editorial-text" />
+                          <h3 className="text-[11px] font-bold uppercase tracking-[0.2em] text-editorial-text">Черновик статьи</h3>
+                        </div>
+                        {lastResponse.targetPublishMode === 'update' && lastResponse.originalMarkdown && (
+                          <button 
+                            onClick={() => setDiffMode(!diffMode)}
+                            className={`flex items-center gap-1 px-2 py-1 border border-editorial-text text-[9px] uppercase font-bold transition-all ${diffMode ? 'bg-editorial-text text-white' : 'bg-transparent text-editorial-text hover:bg-editorial-accent/20'}`}
+                          >
+                            <SplitSquareHorizontal size={12} />
+                            {diffMode ? 'Скрыть Diff View' : 'Diff View'}
+                          </button>
+                        )}
                       </div>
-                      <div className="bg-white border-2 border-editorial-text p-6 max-h-[400px] overflow-y-auto custom-scrollbar text-sm text-gray-900 leading-relaxed font-sans prose prose-sm max-w-none">
-                        <AEMarkdown>{lastResponse.markdown}</AEMarkdown>
-                      </div>
+                      
+                      {diffMode && lastResponse.originalMarkdown ? (
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="bg-gray-50 border border-gray-200">
+                            <div className="bg-gray-200 px-3 py-1 text-[9px] font-bold uppercase tracking-widest border-b border-gray-300">Текущая версия: {lastResponse.originalTitle}</div>
+                            <div className="p-4 max-h-[400px] overflow-y-auto custom-scrollbar text-xs text-gray-700 leading-relaxed font-sans prose prose-sm max-w-none prose-headings:text-gray-700">
+                              <AEMarkdown>{lastResponse.originalMarkdown}</AEMarkdown>
+                            </div>
+                          </div>
+                          <div className="bg-white border-2 border-editorial-text">
+                            <div className="bg-editorial-bg px-3 py-1 text-[9px] font-bold uppercase tracking-widest border-b-2 border-editorial-text">Новый черновик</div>
+                            <div className="p-4 max-h-[400px] overflow-y-auto custom-scrollbar text-xs text-gray-900 leading-relaxed font-sans prose prose-sm max-w-none">
+                              <AEMarkdown>{lastResponse.markdown}</AEMarkdown>
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="bg-white border-2 border-editorial-text p-6 max-h-[400px] overflow-y-auto custom-scrollbar text-sm text-gray-900 leading-relaxed font-sans prose prose-sm max-w-none">
+                          <AEMarkdown>{lastResponse.markdown}</AEMarkdown>
+                        </div>
+                      )}
                     </section>
                   )}
 
@@ -422,12 +475,25 @@ export const EditorConsole = React.memo(function EditorConsole({
                   </button>
                 </div>
               ) : (
-                <button 
-                  onClick={() => setIsConsoleOpen(false)}
-                  className="w-full py-3 bg-editorial-text text-white text-[10px] font-bold uppercase tracking-[0.3em] hover:bg-gray-800 transition-all shadow-[6px_6px_0px_0px_rgba(26,26,26,0.1)] active:shadow-none active:translate-x-1 active:translate-y-1"
-                >
-                  Вернуться к редактору
-                </button>
+                <div className="space-y-4">
+                  {syncStatus.type === 'success' && syncStatus.url && (
+                    <div className="p-4 bg-green-50 border-2 border-green-500 text-center flex flex-col items-center gap-3">
+                       <div className="flex items-center gap-2 text-green-700">
+                         <CheckCircle size={16} />
+                         <span className="font-bold uppercase tracking-widest text-[11px]">{syncStatus.message}</span>
+                       </div>
+                       <a href={syncStatus.url} target="_blank" rel="noopener noreferrer" className="py-2 px-6 bg-green-600 text-white font-bold text-[10px] uppercase tracking-widest hover:bg-green-700 transition-colors shadow-[4px_4px_0px_0px_rgba(22,101,52,0.2)] active:shadow-none active:translate-x-[2px] active:translate-y-[2px]">
+                         Открыть опубликованную статью
+                       </a>
+                    </div>
+                  )}
+                  <button 
+                    onClick={() => setIsConsoleOpen(false)}
+                    className="w-full py-3 bg-editorial-text text-white text-[10px] font-bold uppercase tracking-[0.3em] hover:bg-gray-800 transition-all shadow-[6px_6px_0px_0px_rgba(26,26,26,0.1)] active:shadow-none active:translate-x-1 active:translate-y-1"
+                  >
+                    Вернуться к редактору
+                  </button>
+                </div>
               )}
             </div>
           </motion.div>

@@ -17,13 +17,14 @@ async function generateSearchQueries(
   model: GeminiModelId,
   options?: { signal?: AbortSignal; checkPause?: () => Promise<void>; searchPrompt?: string }
 ): Promise<string[]> {
-  const defaultQueryPrompt = `Основываясь на задаче: "{goal}" и кратком содержании источников:\n\n{sources}\n\nТвоя задача — сгенерировать 5 узких поисковых запросов для поиска существующих статей-дублей в wiki-базе (BookStack).\nНам нужно найти статьи ИМЕННО ОБ ЭТОМ процессе, или ИМЕННО ОБ ЭТОЙ ошибке, а не просто смежные материалы.\nСформулируй запросы по правилам:\n1-2. Точное название конкретного модуля, функции или кода ошибки (самое специфичное).\n3. Главное действие, которое описывает материал.\n4-5. Уникальные термины, аббревиатуры или идентификаторы из текста.\n\nЗАПРОСЫ ДОЛЖНЫ БЫТЬ УЗКИМИ И КОРОТКИМИ (1-3 слова). Возвращай СТРОГО JSON массив строк, например: ["vpn error 504", "setup mikrotik ipsec", "payment gateway"].`;
+  const defaultQueryPrompt = `Основываясь на задаче: "{goal}" и кратком содержании источников:\n\n{sources}\n\nТвоя задача — сгенерировать 5 узких поисковых запросов для поиска существующих статей в wiki-базе (BookStack).\n\nВАЖНОЕ ПРАВИЛО: ИГНОРИРУЙ номера тикетов и задач (например, "225-390021", "тикет 12345"). Статьи в базе знаний описывают функционал и проблемы, а НЕ переписки по тикетам. Выделяй только СУТЬ проблемы!\n\nНам нужно найти статьи ИМЕННО ОБ ЭТОМ процессе, или ИМЕННО ОБ ЭТОЙ ошибке, а не просто смежные материалы.\nСформулируй запросы по правилам:\n1-2. Точное название конкретного модуля, функции, UI элемента или кода ошибки.\n3. Главное действие, которое описывает материал.\n4-5. Уникальные технические термины из текста (без мусорных слов).\n\nЗАПРОСЫ ДОЛЖНЫ БЫТЬ УЗКИМИ И КОРОТКИМИ (1-3 слова). Возвращай СТРОГО JSON массив строк, например: ["scaling ui", "panel resolution", "touch modifier"].`;
 
   let queryPrompt = options?.searchPrompt 
     ? options.searchPrompt
     : defaultQueryPrompt;
 
-  queryPrompt = safeReplace(queryPrompt, '{goal}', goal);
+  const cleanGoal = goal.replace(/тикет\s*[\d-]+/gi, '').replace(/ticket\s*[\d-]+/gi, '').replace(/\b\d{3}-\d{6}\b/g, '');
+  queryPrompt = safeReplace(queryPrompt, '{goal}', cleanGoal);
   queryPrompt = safeReplace(queryPrompt, '{sources}', sources.substring(0, 1500));
 
   let queries: string[] = [];
@@ -37,16 +38,25 @@ async function generateSearchQueries(
       signal: options?.signal, 
       checkPause: options?.checkPause 
     });
-    const parsed = extractJson(qResp);
-    queries = Array.isArray(parsed) ? parsed : [parsed];
-  } catch (e) {
+    const parsed = extractJson(qResp.text);
+    if (Array.isArray(parsed)) {
+      queries = parsed.filter(item => typeof item === 'string');
+    } else if (typeof parsed === 'string') {
+      queries = [parsed];
+    } else {
+      throw new Error("Invalid json format for queries");
+    }
+  } catch (e: any) {
+    if (e.message && (e.message.includes('QUOTA_EXCEEDED') || e.message.includes('429') || e.message.includes('Сетевая ошибка'))) {
+      throw e;
+    }
     console.error('[Agent] Query generation failed. Falling back to key terms.', e);
-    const rawWords = goal.replace(/[^\w\а-яА-ЯёЁ\s]/g, '').split(/\s+/).filter(w => w.length > 3);
+    const rawWords = cleanGoal.replace(/[^\w\а-яА-ЯёЁ\s]/g, '').split(/\s+/).filter(w => w.length > 3 && !/^\d+$/.test(w));
     queries = rawWords.slice(0, 2);
   }
 
   // Ensure fallback words from goal
-  const fallbackTerms = goal.replace(/[^\w\а-яА-ЯёЁ\s]/g, '').split(/\s+/).filter(w => w.length > 4);
+  const fallbackTerms = cleanGoal.replace(/[^\w\а-яА-ЯёЁ\s]/g, '').split(/\s+/).filter(w => w.length > 4 && !/^\d+$/.test(w));
   if (fallbackTerms.length > 0) {
     queries.push(fallbackTerms[0]);
   }
@@ -67,8 +77,9 @@ async function searchRelevantPages(
   const fetchedIds = new Set<number>();
 
   // 1. Vector store search
+  const cleanGoal = goal.replace(/тикет\s*[\d-]+/gi, '').replace(/ticket\s*[\d-]+/gi, '').replace(/\b\d{3}-\d{6}\b/g, '');
   try {
-    const vectorResults = await searchVectorStore(goal, 3);
+    const vectorResults = await searchVectorStore(cleanGoal, 3);
     for (const vRes of vectorResults) {
       if (vRes.id && vRes.id.startsWith('bookstack:page:')) {
         const pageId = parseInt(vRes.id.replace('bookstack:page:', ''), 10);
@@ -88,9 +99,9 @@ async function searchRelevantPages(
     console.error('[Agent] Vector store search failed:', e);
   }
 
-  // 2. Keyword Search in Parallel across up to 3 queries
+  // 2. Keyword Search in Parallel across up to 5 queries
   try {
-    const searchPromises = queries.slice(0, 3).map(async (q) => {
+    const searchPromises = queries.slice(0, 5).map(async (q) => {
       if (options?.checkPause) await options.checkPause();
       try {
         const results = await searchPages(credentials, `${q} {type:page}`);
@@ -105,7 +116,7 @@ async function searchRelevantPages(
     const itemsToFetch: any[] = [];
 
     for (const results of searchResultsLists) {
-      for (const res of results.slice(0, 3)) {
+      for (const res of results.slice(0, 5)) {
         const pageId = typeof res.id === 'string' ? parseInt(res.id, 10) : res.id;
         if (!isNaN(pageId) && !fetchedIds.has(pageId) && res.type === 'page') {
           fetchedIds.add(pageId);
@@ -116,24 +127,31 @@ async function searchRelevantPages(
 
     // 3. Parallel full content fetching for optimal context analysis
     if (itemsToFetch.length > 0) {
-      const fetchPromises = itemsToFetch.map(async (res) => {
-        if (options?.checkPause) await options.checkPause();
-        let fullSnippet = '';
-        try {
-          const fullPage = await fetchPage(credentials, res.id);
-          const text = fullPage.markdown || fullPage.html || fullPage.raw_html || '';
-          fullSnippet = text.substring(0, 4000);
-        } catch (err) {
-          console.error(`[Agent] Failed to fetch page content for page ID ${res.id}`, err);
-          const snippetObj = res.preview_html || res.preview_text;
-          fullSnippet = (typeof snippetObj === 'object' && snippetObj !== null)
-            ? (snippetObj.content || snippetObj.text || JSON.stringify(snippetObj))
-            : (snippetObj || '');
-        }
-        return { id: res.id, name: res.name, snippet: fullSnippet, book_id: res.book_id, url: res.url };
-      });
+      // Process in batches to avoid rate limits and freezing
+      const batchSize = 5;
+      const resolvedPages = [];
+      for (let i = 0; i < itemsToFetch.length; i += batchSize) {
+        const batch = itemsToFetch.slice(i, i + batchSize);
+        const batchPromises = batch.map(async (res) => {
+          if (options?.checkPause) await options.checkPause();
+          let fullSnippet = '';
+          try {
+            const fullPage = await fetchPage(credentials, res.id);
+            const text = fullPage.markdown || fullPage.html || fullPage.raw_html || '';
+            fullSnippet = text.substring(0, 4000); // 4000 chars should be enough to decide if it's a duplicate
+          } catch (err) {
+            console.error(`[Agent] Failed to fetch page content for page ID ${res.id}`, err);
+            const snippetObj = res.preview_html || res.preview_text;
+            fullSnippet = (typeof snippetObj === 'object' && snippetObj !== null)
+              ? (snippetObj.content || snippetObj.text || JSON.stringify(snippetObj))
+              : (snippetObj || '');
+          }
+          return { id: res.id, name: res.name, snippet: fullSnippet, book_id: res.book_id, url: res.url };
+        });
+        const batchResults = await Promise.all(batchPromises);
+        resolvedPages.push(...batchResults);
+      }
 
-      const resolvedPages = await Promise.all(fetchPromises);
       retrievedPages.push(...resolvedPages);
     }
   } catch (searchErr) {
@@ -195,7 +213,8 @@ export async function agenticRagWorkflow(
   let duplicatePromptStr = options?.duplicatePrompt || defaultDuplicatePrompt;
   duplicatePromptStr = safeReplace(duplicatePromptStr, '{goal}', goal);
   duplicatePromptStr = safeReplace(duplicatePromptStr, '{sources}', sources.substring(0, 2000));
-  duplicatePromptStr = safeReplace(duplicatePromptStr, '{retrievedPages}', JSON.stringify(retrievedPages));
+  const duplicateMinifiedPages = retrievedPages.map(p => ({ id: p.id, name: p.name, snippet: p.snippet.substring(0, 1500) }));
+  duplicatePromptStr = safeReplace(duplicatePromptStr, '{retrievedPages}', JSON.stringify(duplicateMinifiedPages));
 
   let duplicateIds: number[] = [];
   try {
@@ -222,9 +241,12 @@ export async function agenticRagWorkflow(
       signal: options?.signal, 
       checkPause: options?.checkPause 
     });
-    const dupJson = extractJson(dupResp);
+    const dupJson = extractJson(dupResp.text);
     duplicateIds = (dupJson.evaluatedPages || []).filter((p: any) => p.isDuplicate).map((p: any) => p.id);
-  } catch(e) {
+  } catch(e: any) {
+    if (e.message && (e.message.includes('QUOTA_EXCEEDED') || e.message.includes('429') || e.message.includes('Сетевая ошибка'))) {
+      throw e;
+    }
     console.error('[Agent] Duplicate detection failed', e);
   }
 
@@ -252,7 +274,8 @@ export async function agenticRagWorkflow(
   let contextPromptStr = options?.contextPrompt || defaultContextPrompt;
   contextPromptStr = safeReplace(contextPromptStr, '{goal}', goal);
   contextPromptStr = safeReplace(contextPromptStr, '{sources}', sources.substring(0, 2000));
-  contextPromptStr = safeReplace(contextPromptStr, '{retrievedPages}', JSON.stringify(remainingPages));
+  const contextMinifiedPages = remainingPages.map(p => ({ id: p.id, name: p.name, snippet: p.snippet.substring(0, 1000) }));
+  contextPromptStr = safeReplace(contextPromptStr, '{retrievedPages}', JSON.stringify(contextMinifiedPages));
 
   let contextIds: number[] = [];
   try {
@@ -280,10 +303,13 @@ export async function agenticRagWorkflow(
         signal: options?.signal, 
         checkPause: options?.checkPause
       });
-      const ctxJson = extractJson(ctxResp);
+      const ctxJson = extractJson(ctxResp.text);
       contextIds = (ctxJson.evaluatedPages || []).filter((p: any) => p.isContext).map((p: any) => p.id);
     }
-  } catch(e) {
+  } catch(e: any) {
+    if (e.message && (e.message.includes('QUOTA_EXCEEDED') || e.message.includes('429') || e.message.includes('Сетевая ошибка'))) {
+      throw e;
+    }
     console.error('[Agent] Context detection failed', e);
     contextIds = remainingPages.map(p => p.id);
   }
@@ -310,6 +336,6 @@ export async function agenticRagWorkflow(
     targetPageName: duplicatePages[0].name,
     targetBookId: duplicatePages[0].book_id,
     retrievedContext: uniqueContextPages,
-    relatedPages: retrievedPages
+    relatedPages: duplicatePages // Show true duplicates in the modal, not all random context pages
   };
 }

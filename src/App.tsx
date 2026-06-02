@@ -9,8 +9,8 @@
  */
 
 import { useState, useEffect, DragEvent } from 'react';
-import { BookStackCredentials, OmnideskCredentials, ProcessedArticle } from './types';
-import { GEMINI_MODELS, DEFAULT_MODEL, GeminiModelId } from './services/gemini';
+import { BookStackCredentials, OmnideskCredentials, ProcessedArticle, Source } from './types';
+import { GEMINI_MODELS, DEFAULT_MODEL, GeminiModelId, analyzeLogsDirectly } from './services/gemini';
 import { ChatWindow } from './components/ChatWindow';
 import { EditorConsole } from './components/EditorConsole';
 import { AppHeader } from './components/AppHeader';
@@ -31,7 +31,7 @@ export default function App() {
   const executionControl = useExecutionControl();
   
   const [isSettingsLoaded, setIsSettingsLoaded] = useState(false);
-  const [sources, setSources] = useState<{ name: string; content: string; selected?: boolean; attachments?: { mimeType: string; data: string; name: string }[] }[]>([]);
+  const [sources, setSources] = useState<Source[]>([]);
   const [workMode, setWorkMode] = useState<'auto' | 'review'>('auto');
   const [pendingApproval, setPendingApproval] = useState<boolean>(false);
   const [chatHistory, setChatHistory] = useState<{ role: 'user' | 'model', content: string }[]>([]);
@@ -162,7 +162,7 @@ export default function App() {
   const [lastResponse, setLastResponse] = useState<ProcessedArticle | null>(null);
   const [isConsoleOpen, setIsConsoleOpen] = useState(false);
   const [isConfigOpen, setIsConfigOpen] = useState(false);
-  const [previewSource, setPreviewSource] = useState<{ name: string; content: string } | null>(null);
+  const [previewSource, setPreviewSource] = useState<Source | null>(null);
 
   const [logAnalysisResult, setLogAnalysisResult] = useState<string | null>(null);
   const [logAnalysisName, setLogAnalysisName] = useState<string>('');
@@ -173,7 +173,6 @@ export default function App() {
     setLogAnalysisName(sourceName);
     executionControl.setSyncStatus({ type: 'idle', message: 'Анализ логов DevOps-агентом...' });
     try {
-      const { analyzeLogsDirectly } = await import('./services/gemini');
       const result = await analyzeLogsDirectly(sourceContent, sourceName, activeSkills);
       setLogAnalysisResult(result);
       setPreviewSource(null); // Close the preview modal to open the analysis report
@@ -514,6 +513,8 @@ root_cause_category: "[Category]"
         setIsConsoleOpen={setIsConsoleOpen}
         isConfigOpen={isConfigOpen}
         setIsConfigOpen={setIsConfigOpen}
+        isSyncing={executionControl.isSyncing}
+        syncProgress={executionControl.syncProgress}
       />
 
       <main className="max-w-6xl mx-auto px-10 py-12">
@@ -584,6 +585,8 @@ root_cause_category: "[Category]"
             isLoadingChapters={isLoadingChapters}
             isLoadingPages={isLoadingPages}
             handleSync={handleSync}
+            loadChaptersAndPages={loadChaptersAndPages}
+            loadChapterPages={loadChapterPages}
             executionControl={executionControl}
             sourcesLength={sources.length}
             contentLength={content.trim().length}

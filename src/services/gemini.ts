@@ -1,17 +1,19 @@
 // All Gemini calls go through the server-side proxy /api/gemini/generate
 // so the API key is never exposed to the browser and requests originate from the server IP.
 
+import axios from 'axios';
 import { BookStackCredentials } from '../types';
 export const GEMINI_MODELS = [
-  { id: 'gemini-3.5-flash',        label: 'Gemini 3.5 Flash (Рекомендуется)', description: 'Быстрая, высокая точность, подходит для большинства задач' },
-  { id: 'gemini-3.1-pro-preview',  label: 'Gemini 3.1 Pro (Preview)', description: 'Максимальное качество для сложных структурированных статей' },
-  { id: 'gemini-3.1-flash-lite',   label: 'Gemini 3.1 Flash-Lite (Stable)', description: 'Сверхбыстрая и экономичная модель' },
-  { id: 'gemini-flash-latest',     label: 'Gemini Flash Latest (Stable)', description: 'Стабильная модель общего назначения' },
+  { id: 'gemini-3.1-flash-lite',         label: 'Gemini 3.1 Flash-Lite', description: 'Сверхбыстрая и стабильная модель 3-го поколения' },
+  { id: 'gemini-3.5-flash',              label: 'Gemini 3.5 Flash', description: 'Новейшая экспериментальная модель' },
+  { id: 'gemini-3.1-flash-live-preview', label: 'Gemini 3.1 Flash Live', description: 'Превью-версия с поддержкой Real-time функций' },
+  { id: 'gemini-3-flash-preview',        label: 'Gemini 3 Flash Preview', description: 'Высокая производительность' },
+  { id: 'gemini-2.5-pro',                label: 'Gemini 2.5 Pro', description: 'Продвинутая модель для глубокого анализа' },
 ] as const;
 
 export type GeminiModelId = typeof GEMINI_MODELS[number]['id'];
 
-export const DEFAULT_MODEL: GeminiModelId = 'gemini-3.5-flash';
+export const DEFAULT_MODEL: GeminiModelId = 'gemini-3.1-flash-lite';
 
 export interface CallGeminiConfig {
   responseMimeType?: string;
@@ -21,43 +23,39 @@ export interface CallGeminiConfig {
   checkPause?: () => Promise<void>;
 }
 
-export async function callGemini(model: GeminiModelId, contents: any[], config?: CallGeminiConfig): Promise<string> {
+export async function callGemini(model: GeminiModelId, contents: any[], config?: CallGeminiConfig): Promise<{ text: string, modelUsed: string }> {
   if (config?.checkPause) await config.checkPause();
   
   let res;
   try {
-    res = await fetch('/api/gemini/generate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ 
-        model, 
-        contents, 
-        config: { 
-          responseMimeType: config?.responseMimeType,
-          responseSchema: config?.responseSchema,
-          systemInstruction: config?.systemInstruction
-        } 
-      }),
-      signal: config?.signal
+    res = await axios.post('/api/gemini/generate', { 
+      model, 
+      contents, 
+      config: { 
+        responseMimeType: config?.responseMimeType,
+        responseSchema: config?.responseSchema,
+        systemInstruction: config?.systemInstruction
+      } 
+    }, {
+      signal: config?.signal,
+      timeout: 600000
     });
   } catch (err: any) {
-    if (err.name === 'AbortError') {
+    if (err.name === 'AbortError' || err.code === 'ERR_CANCELED') {
       throw err;
     }
-    throw new Error(`Сетевая ошибка (Failed to fetch). Возможные причины: превышено время ожидания ИИ (timeout), сервер перезапускается, отсутствует интернет-соединение или заблокированы запросы до Google Gemini API. Пожалуйста, попробуйте другую модель (например, Flash вместо Pro) или повторите запуск позже.`);
+    if (err.response) {
+      throw new Error(`Ошибка от сервера (${err.response.status}): ${err.response.data?.error || err.response.data || err.message}`);
+    } else if (err.code === 'ECONNABORTED') {
+      throw new Error('Сетевая ошибка: превышено время ожидания ответа от ИИ (timeout).');
+    }
+    throw new Error(`Сетевая ошибка при обращении к серверу: ${err.message}`);
   }
 
-  let data;
-  try {
-    data = await res.json();
-  } catch (jsonErr) {
-    throw new Error(`Некорректный ответ от прокси-сервера (не JSON-формат). Статус ответа: ${res.status}`);
-  }
-
-  if (!res.ok) {
-    throw new Error(data.error || `Server error ${res.status}`);
-  }
-  return data.text || '';
+  return { 
+    text: res.data?.text || '', 
+    modelUsed: res.data?.modelUsed || model 
+  };
 }
 
 export function extractJson(text: string): any {
@@ -108,36 +106,33 @@ export async function generateArticleFromSources(
   }
 
   try {
-    const response = await fetch('/api/gemini/generate-article', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        sources,
-        goal,
-        targetMode,
-        availableContext,
-        model,
-        existingContent,
-        systemInstruction: options?.systemInstruction,
-        dataStructure: options?.dataStructure,
-        attachments
-      }),
-      signal: options?.signal
+    const response = await axios.post('/api/gemini/generate-article', {
+      sources,
+      goal,
+      targetMode,
+      availableContext,
+      model,
+      existingContent,
+      systemInstruction: options?.systemInstruction,
+      dataStructure: options?.dataStructure,
+      attachments
+    }, {
+      signal: options?.signal,
+      timeout: 600000 // 10 minutes timeout for the whole workflow max
     });
 
-    if (!response.ok) {
-      const errData = await response.json();
-      throw new Error(errData.error || `HTTP error! status: ${response.status}`);
-    }
-
-    const data = await response.json();
-    return data;
+    return response.data;
   } catch (error: any) {
-    if (error.name === 'AbortError') {
+    if (error.name === 'AbortError' || error.code === 'ERR_CANCELED') {
       throw error;
     }
     console.warn('Backend generateArticle failed, throwing error:', error);
-    throw new Error(`Ошибка генерации статьи на бэкенде: ${error.message || String(error)}`);
+    
+    if (error.code === 'ECONNABORTED') {
+      throw new Error(`Сетевая ошибка: превышено время ожидания сервера во время генерации статьи. Пожалуйста, попробуйте повторить попытку.`);
+    }
+
+    throw new Error(`Ошибка генерации статьи на бэкенде: ${error.response?.data?.error || error.message || String(error)}`);
   }
 }
 
@@ -215,7 +210,8 @@ export async function generateMindmap(
   options?: { signal?: AbortSignal, checkPause?: () => Promise<void> }
 ): Promise<string> {
   const prompt = `Вы — Ассистент NotebookLM. Создай Mindmap по загруженным источникам. Верни СТРОГО вложенными списками Markdown. Корень должен быть один (название темы). НИКАКИХ дополнительных слов, только списки.\n\nАКТИВНЫЕ ИСТОЧНИКИ:\n${combinedContent}`;
-  return callGemini(model, [{ role: 'user', parts: [{ text: prompt }] }], { signal: options?.signal, checkPause: options?.checkPause });
+  const result = await callGemini(model, [{ role: 'user', parts: [{ text: prompt }] }], { signal: options?.signal, checkPause: options?.checkPause });
+  return result.text;
 }
 
 export async function generateFAQ(
@@ -224,7 +220,8 @@ export async function generateFAQ(
   options?: { signal?: AbortSignal, checkPause?: () => Promise<void> }
 ): Promise<string> {
   const prompt = `Вы — Ассистент NotebookLM. Составь подробный FAQ (Часто задаваемые вопросы) на основе загруженных источников. Отформатируй красиво в Markdown.\n\nАКТИВНЫЕ ИСТОЧНИКИ:\n${combinedContent}`;
-  return callGemini(model, [{ role: 'user', parts: [{ text: prompt }] }], { signal: options?.signal, checkPause: options?.checkPause });
+  const result = await callGemini(model, [{ role: 'user', parts: [{ text: prompt }] }], { signal: options?.signal, checkPause: options?.checkPause });
+  return result.text;
 }
 
 export async function generateMermaid(
@@ -242,7 +239,8 @@ export async function generateMermaid(
 
 АКТИВНЫЕ ИСТОЧНИКИ:
 ${combinedContent}`;
-  return callGemini(model, [{ role: 'user', parts: [{ text: prompt }] }], { signal: options?.signal, checkPause: options?.checkPause });
+  const result = await callGemini(model, [{ role: 'user', parts: [{ text: prompt }] }], { signal: options?.signal, checkPause: options?.checkPause });
+  return result.text;
 }
 
 export async function extractTextFromFile(
@@ -252,7 +250,7 @@ export async function extractTextFromFile(
   options?: { signal?: AbortSignal, checkPause?: () => Promise<void>, activeSkills?: Record<string, boolean> }
 ) {
   const safeMimeType = mimeType === 'application/octet-stream' ? 'text/plain' : mimeType;
-  const parsingModel = 'gemini-3.5-flash';
+  const parsingModel = 'gemini-3.1-flash-lite';
 
   let prompt = `Извлеки весь значимый текст из этого файла. 
     Если это HTML, убери скрипты и стили, верни только контент. 
@@ -272,12 +270,12 @@ export async function extractTextFromFile(
   }
 
   try {
-    const text = await callGemini(
+    const result = await callGemini(
       parsingModel as GeminiModelId,
       [{ role: 'user', parts: [{ text: prompt }, { inlineData: { data: base64, mimeType: safeMimeType } }] }],
       { signal: options?.signal, checkPause: options?.checkPause }
     );
-    return text;
+    return result.text;
   } catch (error: any) {
     const message = error.message || String(error);
     if (message.includes('quota') || message.includes('RESOURCE_EXHAUSTED')) {
@@ -302,8 +300,7 @@ export async function analyzeLogsDirectly(
   logName: string,
   activeSkills?: Record<string, boolean>
 ): Promise<string> {
-  const modelToUse = 'gemini-3.5-flash';
-  
+  const modelToUse = 'gemini-3.1-flash-lite';
   let skillDirectives = '';
   if (activeSkills?.['log-analyzer']) {
     skillDirectives += `\n- Детально разберите ошибки (ERROR, CRITICAL, FATAL): выявите их причины, сгруппируйте по типам, подсчитайте частоту возникновения и предложите точечные технические решения по их устранению.`;
@@ -333,9 +330,10 @@ ${logContent.substring(0, 100000)} ${logContent.length > 100000 ? '\n\n[...Те�
 
 Верни только готовый Markdown-отчет без каких-либо вводных слов вроде "Конечно, вот ваш отчет:".`;
 
-  return callGemini(
+  const response = await callGemini(
     modelToUse as GeminiModelId,
     [{ role: 'user', parts: [{ text: prompt }] }],
     { systemInstruction: "You are an elite DevOps and senior system performance analyst." }
   );
+  return response.text;
 }

@@ -1,4 +1,8 @@
 import { Request, Response } from 'express';
+import { createRequire } from 'module';
+
+const require = createRequire(import.meta.url);
+const pdf = require('pdf-parse');
 import { SettingsService } from '../services/SettingsService';
 import { GeminiService } from '../services/GeminiService';
 import { BookStackService } from '../services/BookStackService';
@@ -85,24 +89,19 @@ export class ApiController {
     try {
       const updates = { ...req.body };
       
-      // Безопасность: запрет перезаписи секретов и паролей через открытый эндпоинт
-      if ('geminiApiKey' in updates) delete updates.geminiApiKey;
-      if ('password' in updates) delete updates.password;
-      
-      if (updates.bookstack_creds) {
-        delete updates.bookstack_creds.tokenId;
-        delete updates.bookstack_creds.tokenSecret;
-      }
-      if (updates.omnidesk_creds) {
-        delete updates.omnidesk_creds.apiKey;
-      }
-      if (updates.bookstack) {
-        delete updates.bookstack.tokenId;
-        delete updates.bookstack.tokenSecret;
-      }
-      if (updates.omnidesk) {
-        delete updates.omnidesk.apiKey;
-      }
+      // Безопасность: запрет перезаписи секретов через открытый эндпоинт
+      const sensitiveFields = [
+        'geminiApiKey', 
+        'password', 
+        'bookstack_creds', 
+        'omnidesk_creds',
+        'bookstack',
+        'omnidesk'
+      ];
+
+      sensitiveFields.forEach(field => {
+        if (field in updates) delete updates[field];
+      });
 
       this.settingsService.updateSettings(updates);
       res.json({ success: true });
@@ -111,9 +110,9 @@ export class ApiController {
     }
   };
 
-  public processSource = (req: Request, res: Response): any => {
+  public processSource = async (req: Request, res: Response): Promise<any> => {
     try {
-      const { file } = req;
+      const file = req.file;
       const text = req.body.text || '';
       
       if (file) {
@@ -124,10 +123,36 @@ export class ApiController {
           // Fallback to original
         }
 
+        let metadata = {};
+        if (file.mimetype === 'application/pdf') {
+          try {
+            const data = await pdf(file.buffer);
+            if (data.info) {
+              let creationDate = data.info.CreationDate || '';
+              // Format D:20240212153022Z+03'00' -> 12.02.2024
+              if (creationDate.startsWith('D:')) {
+                const match = creationDate.match(/^D:(\d{4})(\d{2})(\d{2})/);
+                if (match) {
+                  creationDate = `${match[3]}.${match[2]}.${match[1]}`;
+                }
+              }
+              
+              metadata = {
+                title: data.info.Title || '',
+                author: data.info.Author || '',
+                creationDate: creationDate
+              };
+            }
+          } catch (pdfError) {
+            console.warn('Failed to extract PDF metadata:', pdfError);
+          }
+        }
+
         return res.json({ 
           base64: file.buffer.toString('base64'), 
           mimeType: file.mimetype,
-          name 
+          name,
+          metadata
         });
       }
       
@@ -148,8 +173,8 @@ export class ApiController {
     if (!model || !contents) return res.status(400).json({ error: 'model and contents are required' });
     
     try {
-      const text = await this.geminiService.generateContent(apiKey, model, contents, config);
-      res.json({ text });
+      const result = await this.geminiService.generateContent(apiKey, model, contents, config);
+      res.json({ text: result.text, modelUsed: result.modelUsed });
     } catch (error: any) {
       console.error('[Gemini Error]', error?.message || error);
       
@@ -175,13 +200,14 @@ export class ApiController {
     const { sources, goal, targetMode, availableContext, model, existingContent, systemInstruction, dataStructure, attachments } = req.body;
     
     try {
+      const generationModel = model || 'gemini-3.1-flash-lite';
       const result = await this.geminiService.generateArticle(
         apiKey,
         sources || '',
         goal || 'Составьте краткий обзор и организуйте данные в профессиональное руководство.',
         targetMode || 'create',
         availableContext,
-        model || 'gemini-3.5-flash',
+        generationModel,
         existingContent || '',
         systemInstruction || '',
         dataStructure || '',
@@ -289,22 +315,25 @@ export class ApiController {
     }
   };
 
-  public updateSecureSettings = (req: Request, res: Response): Promise<any> => {
+  public updateSecureSettings = async (req: Request, res: Response): Promise<any> => {
     const { password, geminiApiKey, bookstack, omnidesk } = req.body;
     const adminPassword = process.env.ADMIN_PASSWORD;
 
     if (!adminPassword) {
-      return Promise.resolve(res.status(400).json({ error: 'Пароль администратора не задан в конфигурационном файле (.env)' }));
+      return res.status(400).json({ error: 'Пароль администратора не задан в конфигурационном файле (.env)' });
     }
 
     if (password !== adminPassword) {
-      return Promise.resolve(res.status(401).json({ error: 'Неверный пароль администратора' }));
+      return res.status(401).json({ error: 'Неверный пароль администратора' });
     }
 
     try {
       const currentSettings = this.settingsService.getSettings();
       const updates: any = {};
-      if (geminiApiKey !== undefined && geminiApiKey !== 'SERVER_MANAGED') updates.geminiApiKey = geminiApiKey;
+      
+      if (geminiApiKey !== undefined && geminiApiKey !== 'SERVER_MANAGED') {
+        updates.geminiApiKey = geminiApiKey;
+      }
       
       if (bookstack) {
         updates.bookstack = { ...currentSettings.bookstack };
@@ -321,9 +350,9 @@ export class ApiController {
       }
 
       this.settingsService.updateSettings(updates);
-      return Promise.resolve(res.json({ success: true }));
+      return res.json({ success: true });
     } catch (e: any) {
-      return Promise.resolve(res.status(500).json({ error: e.message }));
+      return res.status(500).json({ error: e.message });
     }
   };
 }

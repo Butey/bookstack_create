@@ -1,7 +1,8 @@
 import { MutableRefObject } from 'react';
-import { BookStackCredentials, ProcessedArticle, BookStackBook, BookStackChapter, BookStackPage } from '../types';
-import { GeminiModelId, generateArticleFromSources } from '../services/gemini';
-import { createBook, fetchBooks, createChapter, createPage, updatePage } from '../services/api';
+import { BookStackCredentials, ProcessedArticle, BookStackBook, BookStackChapter, BookStackPage, Source } from '../types';
+import { GeminiModelId, generateArticleFromSources, generateMindmap, generateFAQ, generateMermaid } from '../services/gemini';
+import { agenticRagWorkflow } from '../services/agent';
+import { createBook, fetchBooks, createChapter, createPage, updatePage, indexVectorDocument, fetchPage } from '../services/api';
 
 export function useAgentActions(params: {
   credentials: BookStackCredentials,
@@ -13,7 +14,7 @@ export function useAgentActions(params: {
   selectedPageId: number | null,
   targetMode: 'create' | 'update',
   setTargetMode: any,
-  sources: { name: string; content: string; selected?: boolean; attachments?: any[] }[],
+  sources: Source[],
   content: string,
   setContent: any,
   setSources: any,
@@ -116,7 +117,6 @@ export function useAgentActions(params: {
         pageUrl = createRes?.url || '';
         if (createRes?.id) {
           try {
-            const { indexVectorDocument } = await import('../services/api');
             await indexVectorDocument(`bookstack:page:${createRes.id}`, processed.markdown, {
               name: processed.title,
               book_id: activeBookId,
@@ -137,7 +137,6 @@ export function useAgentActions(params: {
         );
         pageUrl = updateRes?.url || '';
         try {
-          const { indexVectorDocument } = await import('../services/api');
           await indexVectorDocument(`bookstack:page:${publishPageId}`, processed.markdown, {
             name: processed.title,
             book_id: activeBookId,
@@ -183,10 +182,11 @@ export function useAgentActions(params: {
     } = params;
 
     let existingContent: string | undefined;
+    let originalMarkdownForDiff: string | undefined;
+    let originalTitleForDiff: string | undefined;
     if (currentTargetMode === 'update') {
       const pageIdToFetch = detectedPageId || selectedPageId;
       if (pageIdToFetch) {
-        const { fetchPage } = await import('../services/api');
         
         let allExistingTexts = [];
         // Optional: If we are merging duplicates, fetch all related pages
@@ -196,6 +196,11 @@ export function useAgentActions(params: {
             try {
               const rpData = await fetchPage(credentials, rp.id);
               const cnt = rpData.markdown || rpData.html || rpData.raw_html || '';
+              // Pick the main one as the original for diffing if not set
+              if (!originalMarkdownForDiff) {
+                originalMarkdownForDiff = cnt;
+                originalTitleForDiff = rp.name;
+              }
               const pageUrl = rpData.url || `${credentials.baseUrl}/books/${rp.book_id}/page/${rp.id}`;
               allExistingTexts.push(`--- СОДЕРЖИМОЕ СТАТЬИ "${rp.name}" (ID: ${rp.id}, Ссылка: ${pageUrl}) ---\n${cnt}`);
             } catch (e) {
@@ -209,7 +214,10 @@ export function useAgentActions(params: {
           try {
             const pageData = await fetchPage(credentials, pageIdToFetch);
             const pageUrl = pageData.url || `${credentials.baseUrl}/books/${pageData.book_id}/page/${pageData.id}`;
-            existingContent = `--- Ссылка на статью: ${pageUrl} ---\n\n` + (pageData.markdown || pageData.html || pageData.raw_html || '');
+            const cnt = pageData.markdown || pageData.html || pageData.raw_html || '';
+            originalMarkdownForDiff = cnt;
+            originalTitleForDiff = pageData.name;
+            existingContent = `--- Ссылка на статью: ${pageUrl} ---\n\n` + cnt;
           } catch (e) {
             console.error("Could not fetch existing page content", e);
           }
@@ -245,10 +253,21 @@ export function useAgentActions(params: {
       },
       allAttachments
     );
+
+    if (processed.modelUsed && processed.modelUsed !== params.geminiModel) {
+      const modelLabel = processed.modelUsed;
+      executionControl.setSyncStatus({ 
+        type: 'idle', 
+        message: `🔄 Переключаюсь на ${modelLabel} (основная модель перегружена)...` 
+      });
+      processed.thinking = `[ВНИМАНИЕ]: Модель была автоматически переключена на ${processed.modelUsed} из-за временных ограничений квоты (429/503).\n\n` + processed.thinking;
+    }
     
     processed.targetPublishMode = currentTargetMode as 'create' | 'update';
     processed.targetPublishPageId = detectedPageId || selectedPageId;
     processed.targetPublishBookId = detectedBookId || selectedBookId;
+    processed.originalMarkdown = originalMarkdownForDiff;
+    processed.originalTitle = originalTitleForDiff;
     
     if (ragMsg) {
       processed.thinking = ragMsg + processed.thinking;
@@ -310,6 +329,9 @@ export function useAgentActions(params: {
     executionControl.startTask({ step: 1, total: 3, label: 'Подготовка данных и структуры' });
     setChatHistory([]); 
 
+    // Clear duplicate/context flags before new analysis
+    params.setSources((prev: Source[]) => prev.map(s => ({ ...s, isDuplicate: false, isContext: false, duplicateReference: undefined })));
+
     try {
       await executionControl.checkPauseAndAbort();
       const selectedSources = sources.filter(s => s.selected !== false);
@@ -329,7 +351,6 @@ export function useAgentActions(params: {
 
       if (targetMode === 'create') {
         executionControl.setSyncProgress({ step: 1, total: 4, label: 'Запуск Agentic RAG...' });
-        const { agenticRagWorkflow } = await import('../services/agent');
         
         analysis = await agenticRagWorkflow(
           allSourcesText, 
@@ -340,7 +361,17 @@ export function useAgentActions(params: {
           { signal: executionControl.abortControllerRef.current?.signal, checkPause: executionControl.checkPauseAndAbort, searchPrompt: params.searchPrompt, duplicatePrompt: params.duplicatePrompt, contextPrompt: params.contextPrompt }
         );
         
-        if ((analysis.decision === 'update' && analysis.targetPageId) || (analysis.decision === 'create' && analysis.relatedPages && analysis.relatedPages.length > 0)) {
+        if (analysis.decision === 'update' && analysis.targetPageId) {
+          // Mark sources as potential duplicates if we found a match
+          params.setSources((prev: Source[]) => prev.map(s => {
+            if (s.selected === false) return s;
+            return {
+               ...s,
+               isDuplicate: true,
+               duplicateReference: analysis.targetPageName || 'Существующая статья'
+            };
+          }));
+
           setRagConfirmation({
             pageName: analysis.targetPageName || 'Новая статья',
             pageId: analysis.targetPageId || 0,
@@ -356,6 +387,20 @@ export function useAgentActions(params: {
 
         if (analysis.decision === 'create') {
            detectedBookId = analysis.targetBookId;
+           
+           // If we found context but no duplicate, mark sources as having context
+           if (analysis.retrievedContext && analysis.retrievedContext.length > 0) {
+             params.setSources((prev: Source[]) => prev.map(s => {
+               if (s.selected === false) return s;
+               return {
+                  ...s,
+                  isContext: true
+               };
+             }));
+           }
+
+           executionControl.setSyncProgress({ step: 2, total: 4, label: 'Генерация новой статьи' });
+           executionControl.setSyncStatus({ type: 'success', message: 'Существующих дублей нет (найдено ' + (analysis.retrievedContext?.length || 0) + ' контекстных статей). Начинаем написание статьи...' });
         }
       }
 
@@ -407,6 +452,10 @@ export function useAgentActions(params: {
         },
         allAttachments
       );
+
+      if (refined.modelUsed && refined.modelUsed !== geminiModel) {
+        refined.thinking = `[ВНИМАНИЕ: Авто-переключение на ${refined.modelUsed} из-за квот]\n\n` + refined.thinking;
+      }
       
       refined.targetPublishMode = targetMode;
       refined.targetPublishPageId = selectedPageId;
@@ -436,7 +485,6 @@ export function useAgentActions(params: {
       const allSourcesText = sources.filter(s => s.selected !== false).map(s => `--- ${s.name} ---\n${s.content}\n\n`).join('');
       const combinedContent = `${allSourcesText}\n\n${content}`;
       
-      const { generateMindmap } = await import('../services/gemini');
       const md = await generateMindmap(combinedContent, geminiModel, {
         signal: executionControl.abortControllerRef.current?.signal,
         checkPause: executionControl.checkPauseAndAbort
@@ -465,7 +513,6 @@ export function useAgentActions(params: {
       const allSourcesText = sources.filter(s => s.selected !== false).map(s => `--- ${s.name} ---\n${s.content}\n\n`).join('');
       const combinedContent = `${allSourcesText}\n\n${content}`;
       
-      const { generateFAQ } = await import('../services/gemini');
       const faqText = await generateFAQ(combinedContent, geminiModel, {
         signal: executionControl.abortControllerRef.current?.signal,
         checkPause: executionControl.checkPauseAndAbort
@@ -534,7 +581,6 @@ export function useAgentActions(params: {
       const allSourcesText = sources.filter(s => s.selected !== false).map(s => `--- ${s.name} ---\n${s.content}\n\n`).join('');
       const combinedContent = `${allSourcesText}\n\n${content}`;
       
-      const { generateMermaid } = await import('../services/gemini');
       const rawCode = await generateMermaid(combinedContent, geminiModel, {
         signal: executionControl.abortControllerRef.current?.signal,
         checkPause: executionControl.checkPauseAndAbort

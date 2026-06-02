@@ -28,9 +28,23 @@ async function startServer() {
     app.get('*', (req, res) => res.sendFile(path.join(distPath, 'index.html')));
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+  const server = app.listen(PORT, '0.0.0.0', () => {
+    console.log('--------------------------------------------------');
+    console.log(`🚀 Bridge.LM Server started on port ${PORT}`);
+    console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
+    console.log('--------------------------------------------------');
   });
+
+  server.on('error', (error: any) => {
+    if (error.code === 'EADDRINUSE') {
+      console.error(`❌ Port ${PORT} is already in use. Clean up or check other instances.`);
+    } else {
+      console.error('❌ Server failed to start:', error);
+    }
+    process.exit(1);
+  });
+
+  server.timeout = 600000; // 10 minutes timeout for heavy AI generation
 }
 
 startServer();

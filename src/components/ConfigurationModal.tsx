@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { FileText, Terminal, ClipboardList, Brain, Loader2, Download, Upload, Database, Wand2, RefreshCw } from 'lucide-react';
 import { GEMINI_MODELS, GeminiModelId, callGemini } from '../services/gemini';
+import { syncBookstackToVectorStore } from '../services/api';
 import { BookStackCredentials, OmnideskCredentials } from '../types';
 
 interface ConfigurationModalProps {
@@ -61,61 +62,44 @@ export function ConfigurationModal({
 
   const [tempGeminiKey, setTempGeminiKey] = useState('');
   
-  const [isOptimizingPrompt, setIsOptimizingPrompt] = useState(false);
-  const [optimizeMessage, setOptimizeMessage] = useState('');
+  const [optimizingKey, setOptimizingKey] = useState<string | null>(null);
+  const [optimizeMessage, setOptimizeMessage] = useState<{key: string, msg: string} | null>(null);
 
-  const handlePromptEngineerOptimize = async () => {
-    setIsOptimizingPrompt(true);
-    setOptimizeMessage('Запуск Prompt Engineer... Анализируем инструкции...');
+  const handleOptimizeSinglePrompt = async (currentPrompt: string, setter: (val: string) => void, promptType: string, keyName: string) => {
+    setOptimizingKey(keyName);
+    setOptimizeMessage({key: keyName, msg: 'Анализируем...'});
     try {
-      const optimizePrompt = `Вы — элитный Prompt Engineer со специализацией на языковых моделях Gemini и Claude.
-Ваша задача — оптимизировать системный промпт и структуру данных для технического ИИ-писателя Bridge.LM.
+      const optimizePrompt = `Вы — элитный Prompt Engineer со специализацией на языковых моделях Gemini.
+Ваша задача — оптимизировать промпт для технического ИИ-писателя Bridge.LM.
 
-ТЕКУЩИЙ СИСТЕМНЫЙ ПРОМПТ:
----
-${systemInstruction}
----
+ТИП ПРОМПТА: ${promptType}
 
-ТЕКУЩИЙ ШАБЛОН СТРУКТУРЫ ДАННЫХ (Markdown):
+ТЕКУЩИЙ ПРОМПТ:
 ---
-${dataStructure}
+${currentPrompt}
 ---
 
-Ваша цель: сделайте промпт более технологичным, емким, очистите его от "воды", добавьте строгие негативные ограничения (Negative Constraints) для идеального структурирования и устраните любые тавтологии.
-Обязательно оставьте язык ответов — РУССКИЙ.
+Ваша цель: сделайте промпт более технологичным, емким, очистите его от "воды", добавьте строгие инструкции (в том числе негативные, если применимо) для идеального выполнения задачи и устраните любые тавтологии.
+Обязательно оставьте язык ответов — РУССКИЙ. Сохраните все переменные (например, {goal}, {sources}), если они есть в исходном промпте.
 
-Возвращайте СТРОГО JSON следующего формата без Markdown разметки:
-{
-  "optimizedSystemInstruction": "новый усовершенствованный системный промпт со всеми продвинутыми техниками разметки роли",
-  "optimizedDataStructure": "новый отшлифованный шаблон структуры статьи (Markdown)"
-}`;
+Возвращайте СТРОГО оптимизированный текст промпта без markdown-оборачивания (\`\`\`), пояснений или дополнительных слов.`;
 
-      const responseText = await callGemini('gemini-3.5-flash', [{ role: 'user', parts: [{ text: optimizePrompt }] }], {
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: "object",
-          properties: {
-            optimizedSystemInstruction: { type: "string" },
-            optimizedDataStructure: { type: "string" }
-          },
-          required: ["optimizedSystemInstruction", "optimizedDataStructure"]
-        }
-      });
-
-      const parsed = JSON.parse(responseText);
-      if (parsed.optimizedSystemInstruction && parsed.optimizedDataStructure) {
-        setSystemInstruction(parsed.optimizedSystemInstruction);
-        setDataStructure(parsed.optimizedDataStructure);
-        setOptimizeMessage('Промпт и структура успешно оптимизированы Агентом!');
+      const response = await callGemini('gemini-3-flash-preview', [{ role: 'user', parts: [{ text: optimizePrompt }] }]);
+      const responseText = response.text;
+      const optimized = responseText.trim().replace(/^```[a-z]*\n/g, '').replace(/```$/g, '').trim();
+      
+      if (optimized) {
+        setter(optimized);
+        setOptimizeMessage({key: keyName, msg: 'Промпт оптимизирован!'});
       } else {
-        throw new Error('Некорректный формат ответа от инженера промптов');
+        throw new Error('Пустой ответ');
       }
     } catch (e: any) {
       console.error(e);
-      setOptimizeMessage(`Ошибка оптимизации: ${e.message || String(e)}`);
+      setOptimizeMessage({key: keyName, msg: `Ошибка: ${e.message || String(e)}`});
     } finally {
-      setIsOptimizingPrompt(false);
-      setTimeout(() => setOptimizeMessage(''), 5000);
+      setOptimizingKey(null);
+      setTimeout(() => setOptimizeMessage(null), 5000);
     }
   };
 
@@ -187,7 +171,18 @@ ${dataStructure}
             <div className="space-y-4">
               <div className="space-y-2">
                 <div className="flex justify-between items-center">
-                  <label className="text-[10px] font-bold uppercase tracking-widest text-[#8E8E8A]">Системная инструкция агента</label>
+                  <div className="flex items-center gap-2">
+                    <label className="text-[10px] font-bold uppercase tracking-widest text-[#8E8E8A]">Системная инструкция агента</label>
+                    <button
+                      onClick={() => handleOptimizeSinglePrompt(systemInstruction, setSystemInstruction, 'Системная инструкция (Определяет роль, поведение, экспертность)', 'sys')}
+                      disabled={optimizingKey === 'sys'}
+                      className="flex items-center gap-1 cursor-pointer text-[9px] font-bold uppercase tracking-widest text-[#0066cc] hover:underline disabled:opacity-50"
+                    >
+                      {optimizingKey === 'sys' ? <RefreshCw size={10} className="animate-spin text-editorial-text" /> : <Wand2 size={10} />}
+                      Оптимизировать
+                    </button>
+                    {optimizeMessage?.key === 'sys' && <span className={`text-[9px] font-bold ${optimizeMessage.msg.includes('Ошибка') ? 'text-red-500' : 'text-emerald-600'}`}>{optimizeMessage.msg}</span>}
+                  </div>
                   <div className="flex items-center gap-3">
                     <button onClick={() => handleExportMD(systemInstruction, 'system_instruction')} className="flex items-center gap-1 cursor-pointer text-[9px] font-bold uppercase tracking-widest text-editorial-text hover:underline">
                       <Download size={10} /> Экспорт .md
@@ -208,7 +203,18 @@ ${dataStructure}
 
               <div className="space-y-2">
                 <div className="flex justify-between items-center">
-                  <label className="text-[10px] font-bold uppercase tracking-widest text-[#8E8E8A]">Правила структуры данных</label>
+                  <div className="flex items-center gap-2">
+                    <label className="text-[10px] font-bold uppercase tracking-widest text-[#8E8E8A]">Правила структуры данных</label>
+                    <button
+                      onClick={() => handleOptimizeSinglePrompt(dataStructure, setDataStructure, 'Правила структуры данных (Markdown формат, схема разделов статьи)', 'struct')}
+                      disabled={optimizingKey === 'struct'}
+                      className="flex items-center gap-1 cursor-pointer text-[9px] font-bold uppercase tracking-widest text-[#0066cc] hover:underline disabled:opacity-50"
+                    >
+                      {optimizingKey === 'struct' ? <RefreshCw size={10} className="animate-spin text-editorial-text" /> : <Wand2 size={10} />}
+                      Оптимизировать
+                    </button>
+                    {optimizeMessage?.key === 'struct' && <span className={`text-[9px] font-bold ${optimizeMessage.msg.includes('Ошибка') ? 'text-red-500' : 'text-emerald-600'}`}>{optimizeMessage.msg}</span>}
+                  </div>
                   <div className="flex items-center gap-3">
                     <button onClick={() => handleExportMD(dataStructure, 'data_structure')} className="flex items-center gap-1 cursor-pointer text-[9px] font-bold uppercase tracking-widest text-editorial-text hover:underline">
                       <Download size={10} /> Экспорт .md
@@ -227,31 +233,22 @@ ${dataStructure}
                 />
               </div>
 
-              {/* Prompt Engineer Optimization Trigger */}
-              <div className="flex flex-col items-end gap-2">
-                <button
-                  onClick={handlePromptEngineerOptimize}
-                  disabled={isOptimizingPrompt}
-                  className="flex items-center gap-1.5 cursor-pointer bg-[#F5F5F3] border border-editorial-text px-3 py-2 hover:bg-editorial-accent/10 transition-all font-mono text-[10px] uppercase font-bold disabled:opacity-50"
-                  title="Автоматически оптимизировать текущие промпты с помощью AI"
-                >
-                  {isOptimizingPrompt ? (
-                    <RefreshCw size={12} className="animate-spin text-editorial-text" />
-                  ) : (
-                    <Wand2 size={12} className="text-editorial-text" />
-                  )}
-                  Промпт-Оптимизатор
-                </button>
-                {optimizeMessage && (
-                  <span className={`text-[10px] uppercase font-bold ${optimizeMessage.includes('Ошибка') ? 'text-red-500' : 'text-emerald-600'}`}>
-                    {optimizeMessage}
-                  </span>
-                )}
-              </div>
+              {/* Removed Old Prompt Engineer Optimization Trigger */}
 
               <div className="space-y-2">
                 <div className="flex justify-between items-center">
-                  <label className="text-[10px] font-bold uppercase tracking-widest text-[#8E8E8A]">Генерация поисковых запросов (Bookstack)</label>
+                  <div className="flex items-center gap-2">
+                    <label className="text-[10px] font-bold uppercase tracking-widest text-[#8E8E8A]">Генерация поисковых запросов</label>
+                    <button
+                      onClick={() => handleOptimizeSinglePrompt(searchPrompt, setSearchPrompt, 'Генерация поисковых запросов для Bookstack (должен возвращать JSON)', 'search')}
+                      disabled={optimizingKey === 'search'}
+                      className="flex items-center gap-1 cursor-pointer text-[9px] font-bold uppercase tracking-widest text-[#0066cc] hover:underline disabled:opacity-50"
+                    >
+                      {optimizingKey === 'search' ? <RefreshCw size={10} className="animate-spin text-editorial-text" /> : <Wand2 size={10} />}
+                      Оптимизировать
+                    </button>
+                    {optimizeMessage?.key === 'search' && <span className={`text-[9px] font-bold ${optimizeMessage.msg.includes('Ошибка') ? 'text-red-500' : 'text-emerald-600'}`}>{optimizeMessage.msg}</span>}
+                  </div>
                   <div className="flex items-center gap-3">
                     <button onClick={() => handleExportMD(searchPrompt, 'search_prompt')} className="flex items-center gap-1 cursor-pointer text-[9px] font-bold uppercase tracking-widest text-editorial-text hover:underline">
                       <Download size={10} /> Экспорт .md
@@ -272,7 +269,18 @@ ${dataStructure}
 
               <div className="space-y-2">
                 <div className="flex justify-between items-center">
-                  <label className="text-[10px] font-bold uppercase tracking-widest text-[#8E8E8A]">Оценка дублей (Duplicate Detection)</label>
+                  <div className="flex items-center gap-2">
+                    <label className="text-[10px] font-bold uppercase tracking-widest text-[#8E8E8A]">Оценка дублей (Duplicate Detection)</label>
+                    <button
+                      onClick={() => handleOptimizeSinglePrompt(duplicatePrompt, setDuplicatePrompt, 'Оценка дублей статей (Duplicate Detection, должен возвращать JSON)', 'dup')}
+                      disabled={optimizingKey === 'dup'}
+                      className="flex items-center gap-1 cursor-pointer text-[9px] font-bold uppercase tracking-widest text-[#0066cc] hover:underline disabled:opacity-50"
+                    >
+                      {optimizingKey === 'dup' ? <RefreshCw size={10} className="animate-spin text-editorial-text" /> : <Wand2 size={10} />}
+                      Оптимизировать
+                    </button>
+                    {optimizeMessage?.key === 'dup' && <span className={`text-[9px] font-bold ${optimizeMessage.msg.includes('Ошибка') ? 'text-red-500' : 'text-emerald-600'}`}>{optimizeMessage.msg}</span>}
+                  </div>
                   <div className="flex items-center gap-3">
                     <button onClick={() => handleExportMD(duplicatePrompt, 'duplicate_prompt')} className="flex items-center gap-1 cursor-pointer text-[9px] font-bold uppercase tracking-widest text-editorial-text hover:underline">
                       <Download size={10} /> Экспорт .md
@@ -293,7 +301,18 @@ ${dataStructure}
 
               <div className="space-y-2">
                 <div className="flex justify-between items-center">
-                  <label className="text-[10px] font-bold uppercase tracking-widest text-[#8E8E8A]">Оценка релевантности (Context Detection)</label>
+                  <div className="flex items-center gap-2">
+                    <label className="text-[10px] font-bold uppercase tracking-widest text-[#8E8E8A]">Оценка релевантности (Context Detection)</label>
+                    <button
+                      onClick={() => handleOptimizeSinglePrompt(contextPrompt, setContextPrompt, 'Оценка релевантности найденных статей текущей цели (Context Detection, должен возвращать JSON)', 'ctx')}
+                      disabled={optimizingKey === 'ctx'}
+                      className="flex items-center gap-1 cursor-pointer text-[9px] font-bold uppercase tracking-widest text-[#0066cc] hover:underline disabled:opacity-50"
+                    >
+                      {optimizingKey === 'ctx' ? <RefreshCw size={10} className="animate-spin text-editorial-text" /> : <Wand2 size={10} />}
+                      Оптимизировать
+                    </button>
+                    {optimizeMessage?.key === 'ctx' && <span className={`text-[9px] font-bold ${optimizeMessage.msg.includes('Ошибка') ? 'text-red-500' : 'text-emerald-600'}`}>{optimizeMessage.msg}</span>}
+                  </div>
                   <div className="flex items-center gap-3">
                     <button onClick={() => handleExportMD(contextPrompt, 'context_prompt')} className="flex items-center gap-1 cursor-pointer text-[9px] font-bold uppercase tracking-widest text-editorial-text hover:underline">
                       <Download size={10} /> Экспорт .md
@@ -374,7 +393,6 @@ ${dataStructure}
                         <div className="flex items-center gap-4">
                           <button
                             onClick={async () => {
-                              const { syncBookstackToVectorStore } = await import('../services/api');
                               setIsUpdatingSecure(true);
                               setSecureMessage('Запуск загрузки базы...');
                               try {
@@ -535,7 +553,6 @@ ${dataStructure}
                 <div className="space-y-1">
                   <button 
                     onClick={async () => {
-                      const { syncBookstackToVectorStore } = await import('../services/api');
                       setIsSyncingVector(true);
                       setSyncVectorMessage('Инициализация индексации... Сканируем BookStack...');
                       try {

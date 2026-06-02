@@ -1,12 +1,13 @@
 import React from 'react';
 import { ExternalLink, Database, Plus, Trash2 } from 'lucide-react';
 import { SourceItem } from './SourceItem';
+import { Source } from '../types';
 import { ProgressBar } from './ProgressBar';
 import { AnimatePresence } from 'motion/react';
 
 interface WorkspacePanelProps {
-  sources: { name: string; content: string; selected?: boolean; attachments?: any[] }[];
-  setSources: React.Dispatch<React.SetStateAction<{ name: string; content: string; selected?: boolean; attachments?: any[] }[]>>;
+  sources: Source[];
+  setSources: React.Dispatch<React.SetStateAction<Source[]>>;
   processFiles: (files: File[]) => Promise<void>;
   isDragging: boolean;
   setIsDragging: (val: boolean) => void;
@@ -135,6 +136,9 @@ export const WorkspacePanel = React.memo(function WorkspacePanel({
                     key={index}
                     name={source.name}
                     content={source.content}
+                    metadata={source.metadata}
+                    isDuplicate={source.isDuplicate}
+                    duplicateReference={source.duplicateReference}
                     selected={source.selected !== false}
                     onToggle={() => toggleSourceSelection(index)}
                     onDelete={() => removeSource(index)}

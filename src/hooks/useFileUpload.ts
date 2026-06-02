@@ -1,10 +1,12 @@
 import { useCallback, useState } from 'react';
 import axios from 'axios';
+import { Source } from '../types';
 import { extractTextFromFile, GeminiModelId } from '../services/gemini';
+import { indexVectorDocument } from '../services/api';
 
 export function useFileUpload(
   geminiModel: GeminiModelId,
-  setSources: React.Dispatch<React.SetStateAction<{ name: string; content: string; selected?: boolean; attachments?: any[] }[]>>,
+  setSources: React.Dispatch<React.SetStateAction<Source[]>>,
   setSystemInstruction: React.Dispatch<React.SetStateAction<string>>,
   setDataStructure: React.Dispatch<React.SetStateAction<string>>,
   executionControl: {
@@ -41,6 +43,7 @@ export function useFileUpload(
         const response = await axios.post('/api/process-source', formData, {
           headers: { 'Content-Type': 'multipart/form-data' },
           signal: executionControl.abortControllerRef.current?.signal,
+          timeout: 600000,
           onUploadProgress: (progressEvent) => {
             if (progressEvent.total) {
               const fileUploadPercent = (progressEvent.loaded / progressEvent.total) * 100;
@@ -55,6 +58,7 @@ export function useFileUpload(
         
         const base64Str = response.data.base64;
         const mimeType = response.data.mimeType || file.type || 'text/plain';
+        const metadata = response.data.metadata;
         
         const extractionStartPercent = basePercent + (totalWeightPerFile * 0.5);
         setUploadProgress({ percent: Math.round(extractionStartPercent), label: `${prefix}Агент читает текст...` });
@@ -71,14 +75,19 @@ export function useFileUpload(
           attachList.push({ name: file.name, mimeType, data: base64Str });
         }
         
-        setSources(prev => [...prev, { name: file.name, content: extractedText, attachments: attachList.length ? attachList : undefined }]);
+        setSources(prev => [...prev, { 
+          name: file.name, 
+          content: extractedText, 
+          attachments: attachList.length ? attachList : undefined,
+          metadata: metadata
+        }]);
 
         // Index the file into vector store
         try {
-          const { indexVectorDocument } = await import('../services/api');
           await indexVectorDocument(`file:${Date.now()}_${file.name}`, extractedText, {
             name: file.name,
-            type: 'uploaded_file'
+            type: 'uploaded_file',
+            ...metadata
           });
         } catch (err) {
           console.error('Failed to index file to vector DB', err);
@@ -112,6 +121,7 @@ export function useFileUpload(
       const response = await axios.post('/api/process-source', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
         signal: executionControl.abortControllerRef.current?.signal,
+        timeout: 600000,
         onUploadProgress: (progressEvent) => {
           if (progressEvent.total) {
             const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);

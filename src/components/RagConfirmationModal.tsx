@@ -38,41 +38,38 @@ export function RagConfirmationModal({
           </button>
         </div>
         <div className="p-8 pb-10">
-          <p className="text-sm mb-4 leading-relaxed">
-            {ragConfirmation.analysis?.decision === 'update' 
-              ? 'Агент проанализировал ваши источники и обнаружил в Wiki релевантную статью для обновления:'
-              : 'Агент предлагает создать новую статью, но нашел в Wiki похожие или косвенно связанные статьи:'}
+          <p className="text-sm mb-4 leading-relaxed font-serif">
+            Агент проанализировал материалы и нашел в базе знаний существующую релевантную статью. Зачем плодить дубли, если можно обновить её?
           </p>
           
-          {ragConfirmation.analysis?.decision === 'update' && (
-            <div className="p-4 bg-editorial-accent/10 border-l-4 border-editorial-text mb-6">
-              <p className="font-bold text-lg mb-2">
-                <a href={ragConfirmation.analysis?.retrievedContext?.find((p: any) => p.id === ragConfirmation.pageId)?.url || `${baseUrl}/books/${ragConfirmation.bookId}/page/${ragConfirmation.pageId}`} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">
-                  {ragConfirmation.pageName}
-                </a>
-              </p>
-              
-              {ragConfirmation.analysis?.retrievedContext?.find((p: any) => p.id === ragConfirmation.pageId)?.snippet && (
-                <div className="mt-4 pt-4 border-t border-editorial-text/20">
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-2">Обнаруженный контекст:</p>
-                  <div 
-                    className="text-xs text-gray-700 italic prose prose-sm max-h-32 overflow-y-auto custom-scrollbar pr-2"
-                    dangerouslySetInnerHTML={{ 
-                      __html: (() => {
-                        const snippet = ragConfirmation.analysis.retrievedContext.find((p: any) => p.id === ragConfirmation.pageId)?.snippet;
-                        return (typeof snippet === 'object' && snippet !== null) ? (snippet.content || snippet.text || JSON.stringify(snippet)) : String(snippet || '');
-                      })()
-                    }}
-                  />
-                </div>
-              )}
-            </div>
-          )}
+          <div className="p-4 bg-editorial-accent/10 border-l-4 border-editorial-text mb-6">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-emerald-700 mb-2">Эта статья будет обновлена и дописана:</p>
+            <p className="font-bold text-lg mb-2">
+              <a href={ragConfirmation.analysis?.retrievedContext?.find((p: any) => p.id === ragConfirmation.pageId)?.url || `${baseUrl}/books/${ragConfirmation.bookId}/page/${ragConfirmation.pageId}`} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">
+                {ragConfirmation.pageName}
+              </a>
+            </p>
+            
+            {ragConfirmation.analysis?.retrievedContext?.find((p: any) => p.id === ragConfirmation.pageId)?.snippet && (
+              <div className="mt-4 pt-4 border-t border-editorial-text/20">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-2">Контекст из статьи:</p>
+                <div 
+                  className="text-xs text-gray-600 italic prose prose-sm max-h-32 overflow-y-auto custom-scrollbar pr-2"
+                  dangerouslySetInnerHTML={{ 
+                    __html: (() => {
+                      const snippet = ragConfirmation.analysis?.retrievedContext?.find((p: any) => p.id === ragConfirmation.pageId)?.snippet;
+                      return (typeof snippet === 'object' && snippet !== null) ? (snippet.content || snippet.text || JSON.stringify(snippet)) : String(snippet || '');
+                    })()
+                  }}
+                />
+              </div>
+            )}
+          </div>
 
-          {ragConfirmation.analysis?.relatedPages && ragConfirmation.analysis.relatedPages.filter((p: any) => p.id !== ragConfirmation.pageId).length > 0 && (
+          {Array.isArray(ragConfirmation.analysis?.relatedPages) && ragConfirmation.analysis.relatedPages.filter((p: any) => p.id !== ragConfirmation.pageId).length > 0 && (
             <div className="mb-6 p-4 border border-editorial-text/20 bg-gray-50">
               <p className="text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-2 flex items-center gap-2">
-                 Найдены возможные дубликаты ({ragConfirmation.analysis.relatedPages.filter((p: any) => p.id !== ragConfirmation.pageId).length}):
+                 Также найдены похожие дубли в базе ({ragConfirmation.analysis.relatedPages.filter((p: any) => p.id !== ragConfirmation.pageId).length}):
               </p>
               <ul className="text-sm list-none font-medium flex flex-col gap-2">
                  {ragConfirmation.analysis.relatedPages.filter((p: any) => p.id !== ragConfirmation.pageId).map((page: any) => (
@@ -84,18 +81,21 @@ export function RagConfirmationModal({
                      </li>
                  ))}
               </ul>
+              <div className="text-[10px] text-gray-600 mt-4 p-2 bg-yellow-50 border border-yellow-200">
+                <span className="font-bold">Как работает объединение:</span> Агент прочитает эти статьи, извлечет ценную информацию, и вставит её в <b>основную статью</b> (которая указана выше). Сами дубликаты он не удаляет.
+              </div>
             </div>
           )}
 
           <p className="text-sm mb-6 font-serif italic text-gray-600">
-            Вы хотите обновить/дополнить основную статью вашей новой информацией (и объединить туда данные при множестве дубликатов), или всё равно создать совершенно новую статью?
+            Вы хотите обновить основную статью (дополнить её переданными материалами, сохранив всё ценное), или проигнорировать её и создать полностью новую?
           </p>
           <div className="flex gap-4">
             <button
               onClick={() => handleRagChoice(true, ragConfirmation)}
               className="flex-1 py-4 bg-editorial-text text-white font-bold uppercase tracking-widest text-xs hover:bg-black transition-colors"
             >
-              Обновить эту статью
+              Обновить предложенную статью
             </button>
             <button
               onClick={() => handleRagChoice(false, ragConfirmation)}

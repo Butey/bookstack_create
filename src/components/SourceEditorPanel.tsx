@@ -2,7 +2,7 @@ import { ClipboardList } from 'lucide-react';
 import { WorkspacePanel } from './WorkspacePanel';
 import { ConfigurationModal } from './ConfigurationModal';
 import { AgentSkillsPanel } from './AgentSkillsPanel';
-
+import { indexVectorDocument } from '../services/api';
 import { GeminiModelId } from '../services/gemini';
 
 interface SourceEditorPanelProps {
@@ -131,7 +131,6 @@ export function SourceEditorPanel(props: SourceEditorPanelProps) {
                       props.setSources((prev: any) => [...prev, { name: data.name, content: data.content, attachments: data.attachments || [] }]);
                       
                       try {
-                        const { indexVectorDocument } = await import('../services/api');
                         await indexVectorDocument(`ticket:${ticketId}`, data.content, {
                           name: data.name,
                           type: 'ticket'

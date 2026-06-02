@@ -129,7 +129,7 @@ export const ChatWindow = React.memo(function ChatWindow({ isOpen, onClose, sour
 
       const response = await callGemini(model, fullMessages, { signal: controller.signal });
       clearTimeout(timeoutId);
-      setMessages((prev) => [...prev, { role: 'model', content: response }]);
+      setMessages((prev) => [...prev, { role: 'model', content: response.text }]);
     } catch (error: any) {
       clearTimeout(timeoutId);
       console.error(error);

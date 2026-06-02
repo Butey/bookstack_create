@@ -1,4 +1,4 @@
-◇ injected env (0) from .env // tip: ◈ secrets for agents [www.dotenvx.com]
+◇ injected env (0) from .env // tip: ⌘ enable debugging { debug: true }
 WebSocket server error: Port 24678 is already in use
 node:events:497
       throw er; // Unhandled 'error' event

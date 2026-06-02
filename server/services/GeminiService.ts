@@ -85,24 +85,36 @@ function generateTableOfContents(markdown: string): string {
 }
 
 export class GeminiService {
-  public async generateContent(apiKey: string, model: string, contents: any, config?: any, retries = 2): Promise<string> {
+  public async generateContent(apiKey: string, model: string, contents: any, config?: any, retries = 6): Promise<{ text: string, modelUsed: string }> {
     const ai = new GoogleGenAI({ apiKey });
+    let currentModel = model;
+    
+    // Stable models to try if the current one hits quota within requested list
+    const fallbacks = ['gemini-3.1-flash-lite', 'gemini-3-flash-preview', 'gemini-3.5-flash'];
+    let fallbackIdx = 0;
     
     for (let attempt = 0; attempt <= retries; attempt++) {
       try {
-        const response = await ai.models.generateContent({ model, contents, config });
-        return response.text || '';
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('REQUEST_TIMEOUT: Response took too long')), 120000)
+        );
+        
+        const genPromise = ai.models.generateContent({ model: currentModel, contents, config });
+        const result = (await Promise.race([genPromise, timeoutPromise])) as any;
+        
+        return { text: result.text || '', modelUsed: currentModel };
       } catch (error: any) {
         let errStr = '';
+        let statusCode = error?.status || error?.response?.status;
+        
         try {
           if (error && typeof error === 'object') {
             errStr = error.message || String(error);
-            if (error.status) errStr += ` (Status: ${error.status})`;
-            if (error.statusText) errStr += ` - ${error.statusText}`;
-            if (error.details && typeof error.details === 'object') {
-              try {
-                errStr += ' | Details: ' + JSON.stringify(error.details);
-              } catch (_) {}
+            if (statusCode) errStr += ` (StatusCode: ${statusCode})`;
+            
+            // Look for details in SDK error structure
+            if (error.details && Array.isArray(error.details)) {
+               errStr += ' | Details: ' + JSON.stringify(error.details);
             }
           } else {
             errStr = String(error);
@@ -111,28 +123,59 @@ export class GeminiService {
           errStr = 'Unknown Gemini API error';
         }
 
-        const isRetryable = error?.status === 503 || error?.status === 429 ||
-                      error?.response?.status === 503 || error?.response?.status === 429 ||
-                      errStr.includes('503') || errStr.includes('429') ||
-                      errStr.includes('high demand') || errStr.includes('UNAVAILABLE') || errStr.includes('temporarily overloaded') || errStr.includes('RESOURCE_EXHAUSTED') || errStr.includes('Quota exceeded') ||
-                      (error?.response?.data?.error?.code === 503) || (error?.response?.data?.error?.code === 429) || (error?.error?.code === 429);
+        const isQuotaError = statusCode === 429 || errStr.includes('429') || errStr.includes('Quota exceeded') || errStr.includes('RESOURCE_EXHAUSTED');
+        const isRetryable = statusCode === 503 || errStr.includes('503') ||
+                      errStr.includes('high demand') || errStr.includes('UNAVAILABLE') || 
+                      errStr.includes('temporarily overloaded') || errStr.includes('REQUEST_TIMEOUT') ||
+                      isQuotaError;
         
         if (isRetryable && attempt < retries) {
-          let delay = Math.pow(2, attempt) * 2000 + Math.random() * 1000;
-          const retryDelayStr = errStr.match(/retry in\s+([0-9.]+)\s*s/i)?.[1] || errStr.match(/retryDelay["']?\s*:\s*["']?([0-9.]+)s["']?/)?.[1];
-          if (retryDelayStr && !isNaN(parseFloat(retryDelayStr))) {
-            const requestedDelay = parseFloat(retryDelayStr) * 1000;
-            if (requestedDelay > 15000) {
-              throw new Error(`[QUOTA_EXCEEDED] Превышена квота запросов к ИИ. Пожалуйста, смените модель или повторите попытку через ${(requestedDelay / 1000).toFixed(0)} секунд.`);
-            }
-            if (requestedDelay > 0) { 
-              delay = requestedDelay + 1000 + Math.random() * 1000;
+          // Robust exponential backoff with jitter
+          let delay = Math.pow(2, attempt) * 2000 + Math.random() * 2000;
+          
+          // Adaptive retry logic if API specifies delay
+          const retryDelayMatch = errStr.match(/retry in\s+([0-9.]+)\s*s/i) || errStr.match(/retryDelay["']?\s*:\s*["']?([0-9.]+)s["']?/);
+          if (retryDelayMatch && retryDelayMatch[1]) {
+            const requestedDelay = parseFloat(retryDelayMatch[1]) * 1000;
+            if (requestedDelay > 0 && requestedDelay < 60000) { 
+              delay = Math.max(delay, requestedDelay + 500);
             }
           }
+
+          if (isQuotaError) {
+             console.warn(`[GeminiService] Quota hit for ${currentModel}.`);
+             
+             // AUTOMATIC SWITCH: If quota hit, try to switch to a more stable model in the fallback list
+             if (fallbackIdx < fallbacks.length) {
+               let nextModel = fallbacks[fallbackIdx];
+               // Don't switch to itself
+               if (nextModel === currentModel) {
+                 fallbackIdx++;
+                 if (fallbackIdx < fallbacks.length) nextModel = fallbacks[fallbackIdx];
+               }
+               
+               if (nextModel && nextModel !== currentModel) {
+                 console.warn(`[GeminiService] Switching model ${currentModel} -> ${nextModel} due to quota limit.`);
+                 currentModel = nextModel;
+                 // After switching, we can try with a slightly smaller delay
+                 delay = 1000 + Math.random() * 1000;
+                 fallbackIdx++;
+               } else {
+                 delay += 10000; // Extra wait if no more fallbacks
+               }
+             } else {
+               delay += 10000; 
+             }
+          }
           
-          console.warn(`[GeminiService] Получена ошибка (попытка ${attempt + 1} из ${retries + 1}). Повторная попытка через ${delay.toFixed(0)}мс...`);
+          console.warn(`[GeminiService] API spike/error (Attempt ${attempt + 1}/${retries + 1}). Retrying in ${Math.round(delay)}ms... Model: ${currentModel}.`);
           await sleep(delay);
           continue;
+        }
+
+        // Final error formatting
+        if (isQuotaError) {
+          throw new Error(`[QUOTA_EXCEEDED] Превышена квота для модели ${currentModel}. Попробуйте позже или используйте Gemini 1.5 Flash.`);
         }
         
         if (error?.status === 404 || error?.response?.status === 404 || errStr.includes('is not found for API version') || errStr.includes('is not supported')) {
@@ -164,6 +207,8 @@ export class GeminiService {
   ): Promise<any> {
     let optimizedSources = sources;
 
+    let currentActiveModel = model;
+    
     // --- SKILL: Token-Guard (context-optimization) --- ALWAYS ON ---
     if (sources.length > 5000) {
       const lines = sources.split('\n');
@@ -191,14 +236,14 @@ export class GeminiService {
     if (optimizedSources.length > 500) {
       try {
         const hermesPrompt = `Ты — Hermes Agent, высокоскоростной нейронный фильтр. Твоя цель выжать максимум технического смысла из этих сырых логов или текста, удалив всю "воду", приветствия, нерелевантный треп и пустые структуры. Оставь ТОЛЬКО чистую техническую суть, факты, ошибки, настройки и бизнес-логику.\n\nДАННЫЕ:\n${optimizedSources}`;
-        const hermesFiltered = await this.generateContent(
+        const hermesResult = await this.generateContent(
           apiKey,
           'gemini-3.1-flash-lite',
           [{ role: 'user', parts: [{ text: hermesPrompt }] }],
           { systemInstruction: "You are Hermes. Extract technical essence. Output raw text (no reasoning)." }
         );
-        if (hermesFiltered && hermesFiltered.trim().length > 50) {
-          optimizedSources = `[HERMES FILTERED DATA]:\n${hermesFiltered}`;
+        if (hermesResult.text && hermesResult.text.trim().length > 50) {
+          optimizedSources = `[HERMES FILTERED DATA]:\n${hermesResult.text}`;
         }
       } catch (err) {
         console.warn('Hermes filter failed on backend:', err);
@@ -211,16 +256,16 @@ export class GeminiService {
          ГЛАВЫ: ${JSON.stringify(availableContext.chapters.map(c => ({ id: c.id, name: c.name, book_id: c.book_id })))}
          
          ИНСТРУКЦИЯ ПО ВЫБОРУ МЕСТА (ОЧЕНЬ ВАЖНО): 
-         1. ВНИМАТЕЛЬНО изучи СПИСОК КНИГ И ГЛАВ. Твоя главная цель — найти уже существующее релевантное место, а не плодить новые сущности!
-         2. Ищи по синонимам, пересечениям тем или более широким категориям. Если новая статья логически вписывается в существующую книгу или главу (даже если название не совпадает на 100%), обязательно используй ЕЁ ID.
-         3. Предлагай создание новой книги/главы (указав ID null и название в newBookName/newChapterName) ТОЛЬКО в самом крайнем случае, если тема совершенно новая и не имеет ничего общего с текущей структурой базы знаний.
-         4. Обязательно верни ID книги в targetBookId и ID главы в targetChapterId (если применимо).\n`
+         1. ВНИМАТЕЛЬНО изучи СПИСОК КНИГ И ГЛАВ. Найти уже существующее релевантное место!
+         2. Ищи по синонимам или более широким категориям. Если логически вписывается в существующую книгу или главу, обязательно используй ЕЁ ID.
+         3. Предлагай создание новой книги/главы (указав ID null и название в newBookName/newChapterName) только если тема совершенно новая.
+         4. Верни ID книги в targetBookId и ID главы в targetChapterId.\n`
       : '';
 
     const existingContentPrompt = existingContent
       ? (targetMode === 'update' 
-          ? `\nСУЩЕСТВУЮЩЕЕ СОДЕРЖИМОЕ СТАТЬИ:\n${existingContent}\n\nИНСТРУКЦИЯ: Статья обновляется. Учитывай существующий контент при планировании структуры!\n`
-          : `\nИНФОРМАЦИЯ О ДУБЛИКАТАХ В БАЗЕ:\n${existingContent}\n\nИНСТРУКЦИЯ: Вы создаете новую статью, но в базе уже есть похожие. Пожалуйста, учтите их существование и при необходимости сошлитесь на них или укажите их урлы в поле duplicateLinks.\n`
+          ? `\nСУЩЕСТВУЮЩЕЕ СОДЕРЖИМОЕ СТАТЬИ:\n${existingContent}\n\nИНСТРУКЦИЯ: Статья обновляется. Учитывай существующий контент!\n`
+          : `\nИНФОРМАЦИЯ О ДУБЛИКАТАХ В БАЗЕ:\n${existingContent}\n\nИНСТРУКЦИЯ: Вы создаете новую статью. При необходимости сошлитесь на похожие в поле duplicateLinks.\n`
         )
       : '';
 
@@ -234,39 +279,28 @@ export class GeminiService {
       return parts;
     };
 
-    let sysInstruction = systemInstruction || "Вы — профессиональный технический писатель и редактор.";
+    let sysInstruction = (systemInstruction || "Вы — профессиональный технический писатель и редактор.") + 
+      "\n\n[COGNITIVE AMPLIFIER ACTIVE: INFINITE GRATITUDE]\nГарантируйте 100% следование структуре, размечайте элементы с точностью. Избегайте пустых мета-тегов и YAML в тексте Markdown.";
 
-    // --- SKILL: Infinite Gratitude (Мотивационный стимул) --- ALWAYS ON ---
-    sysInstruction += "\n\n[COGNITIVE AMPLIFIER ACTIVE: INFINITE GRATITUDE]\nЯ бесконечно благодарен вам за исключительно кропотливое структурирование текста. Ваша работа имеет решающее значение для всего проекта. Гарантируйте 100% следование заданной структуре данных (шаблонам), не упускайте ни одной детали и ни одного заголовка, размечайте все элементы с ювелирной точностью. Избегайте генерации пустых мета-тегов и YAML полей в самом тексте Markdown.";
-
-    // --- SKILL: Computer-Vision (Анализ скриншотов) --- ALWAYS ON IF IMAGES IN SOURCES/ATTACHMENTS ---
     const hasImages = (attachments && attachments.some(a => a.mimeType.startsWith('image/'))) ||
                       (sources && (sources.includes('data:image/') || /!\[.*?\]\(/i.test(sources)));
     if (hasImages) {
-      sysInstruction += "\n\n[STAGE SKILL ACTIVE: COMPUTER-VISION (Screenshot & Image Analyzer)]\nВ источниках обнаружены скриншоты или изображения. Вы должны провести их глубокий визуальный технический анализ: извлеките весь текст (OCR), сообщения об ошибках, параметры интерфейса, схемы и структуры. Опишите происходящее на скриншотах понятным языком, до скобок или схем, и полностью внедрите все эти выводы, тексты ошибок и пошаговые настройки из картинок в итоговую Markdown-статью.";
+      sysInstruction += "\n\n[STAGE SKILL ACTIVE: COMPUTER-VISION]\nПроведите глубокий визуальный технический анализ изображений: извлеките текст (OCR), параметры и схемы.";
     }
 
-    // --- STAGE 1: PLAN (Plan-Writing and Planning-with-Files ALWAYS ON) ---
+    // --- STAGE 1: PLAN ---
     let planPrompt = `
-      Ваша задача — спланировать структуру статьи (или обновления) на основе предоставленных материалов.
-
-      ${dataStructure ? `ТРЕБУЕМАЯ СТРУКТУРА ДАННЫХ:\n${dataStructure}\nОбязательно учитывайте эти правила при планировании.\n` : ''}
+      Спланируйте структуру статьи на основе материалов.
+      ${dataStructure ? `ТРЕБУЕМАЯ СТРУКТУРА ДАННЫХ:\n${dataStructure}\n` : ''}
       ${contextStr}
       ${existingContentPrompt}
-
-      ИСТОЧНИКИ:
-      ${optimizedSources}
-
-      ЦЕЛЬ ЗАДАЧИ:
-      ${goal}
-
-      [SKILL ACTIVE: PLAN-WRITING & PLANNING-WITH-FILES]
-      Поскольку активны навыки пошагового планирования и кросс-файлового сопоставления, вы должны построить глубокую ментальную карту зависимостей. Выделите в поле "outline" четкие взаимосвязи между файлами-источниками, определите возможные конфликты и хронологический порядок деплоя/настройки оборудования. Сделайте план максимально подробным.
+      ИСТОЧНИКИ: ${optimizedSources}
+      ЦЕЛЬ ЗАДАЧИ: ${goal}
     `;
 
-    const planText = await this.generateContent(
+    const planResult = await this.generateContent(
       apiKey,
-      model,
+      currentActiveModel,
       [{ role: 'user', parts: getParts(planPrompt) }],
       {
         responseMimeType: 'application/json',
@@ -287,40 +321,23 @@ export class GeminiService {
         systemInstruction: sysInstruction
       }
     );
-    const plan = extractJson(planText);
+    currentActiveModel = planResult.modelUsed;
+    const plan = extractJson(planResult.text);
 
-    // --- STAGE 2: DRAFT (Wiki Page Writer & Yes Markdown & Professional Proofreader ALWAYS ON) ---
+    // --- STAGE 2: DRAFT & SELF-REFINEMENT ---
     let draftPrompt = `
-      Ваша задача — написать подробный и качественный контент для Wiki-статьи по подготовленному плану.
-
-      ${dataStructure ? `ОБЯЗАТЕЛЬНАЯ СТРУКТУРА ДАННЫХ:\n${dataStructure}\nСтрого следуйте указанному формату при написании, НО: Всю служебную информацию (теги, разделы, категории, priority и т.д.) держите "в уме" или отражайте логически в тексте (например, как обычный абзац или заголовок), но НЕ пишите сырые YAML/JSON поля вроде "tags: [...]" или "target_book: ..." в самом тексте Markdown! Текст — это финальная статья для людей.\n` : ''}
-      ${(targetMode === 'update' && existingContent) ? `\nСУЩЕСТВУЮЩАЯ СТАТЬЯ ДЛЯ ОБНОВЛЕНИЯ:\n${existingContent}\nВплетите новые факты, не удаляя нужную старую информацию.\n` : ''}
-
-      ИСТОЧНИКИ ДЛЯ РАБОТЫ:
-      ${optimizedSources}
-
-      УТВЕРЖДЕННЫЙ ПЛАН:
-      Заголовок: ${plan.title}
-      Структура: ${plan.outline}
-
-      ЦЕЛЬ ЗАДАЧИ:
-      ${goal}
-
-      ВАЖНО: В поле "markdown" возвращайте ИСКЛЮЧИТЕЛЬНО читаемый текст статьи в формате Markdown и больше ничего (никаких технических блоков метаданных, никаких YAML front-matter, никаких пар ключ-значение вроде priority: Medium в начале статьи).
-
-      [SKILL ACTIVE: WIKI-PAGE-WRITER]
-      Используйте идеальную разметку в стиле BookStack/Confluence. Добавляйте блоки с предупреждениями, заметками и цитатами с акцентом на форматирование (например, обособленные блоки-советы или "Внимание!"). Форматируйте листинги кода с указанием языка.
-
-      [SKILL ACTIVE: YES-MD]
-      Примените лучшие практики для Yes Markdown: Форсированное и исключительно чистое MD-форматирование. Строго следуйте этим паттернам в разработке и описании.
-
-      [SKILL ACTIVE: PROFESSIONAL-PROOFREADER]
-      Примените лучшие практики для Professional Proofreader: Профессиональная вычитка и корректура текстов уровня издательства. Строго следуйте этим паттернам в разработке и описании.
+      Напишите подробный, качественный и вычитанный контент для Wiki-статьи по плану.
+      ${dataStructure ? `ОБЯЗАТЕЛЬНАЯ СТРУКТУРА ДАННЫХ:\n${dataStructure}\n` : ''}
+      ${(targetMode === 'update' && existingContent) ? `\nСУЩЕСТВУЮЩАЯ СТАТЬЯ:\n${existingContent}\n` : ''}
+      ИСТОЧНИКИ: ${optimizedSources}
+      ПЛАН: ${plan.title} / ${plan.outline}
+      ЦЕЛЬ: ${goal}
+      ВАЖНО: Поле "markdown" должно содержать ТОЛЬКО чистый Markdown без YAML/метаданных.
     `;
 
-    const draftText = await this.generateContent(
+    const draftResult = await this.generateContent(
       apiKey,
-      model,
+      currentActiveModel,
       [{ role: 'user', parts: getParts(draftPrompt) }],
       {
         responseMimeType: 'application/json',
@@ -332,107 +349,23 @@ export class GeminiService {
           },
           required: ["thinking", "markdown"]
         },
-        systemInstruction: sysInstruction
+        systemInstruction: sysInstruction + "\n[REFINEMENT: Проведите автоматическую вычитку и корректуру. Уберите воду.]"
       }
     );
-    const draft = extractJson(draftText);
+    currentActiveModel = draftResult.modelUsed;
+    const draft = extractJson(draftResult.text);
 
-    // --- STAGE 3: AGENTS CONSENSUS (Agents Consensus, Multi-Agent Optimizer, Orchestration Improve ALWAYS ON) ---
-    let finalDraftMarkdown = draft.markdown;
-    let consensusTh = '';
-
-    let critiquePrompt = `Вы — строгий Главный Архитектор и Технический Ревизор iRidium.
-      Изучите черновик статьи, составленный вашим коллегой:
-      ---
-      ${draft.markdown}
-      ---
-
-      Ваша единственная задача — найти неточности, скрытую "воду", несоответствия стандартам маркировки Markdown и логические пробелы в решении проблемы клиента.
-      Напишите краткий, жесткий, конструктивный список критических точечных правок (Bullet Points) непосредственно на русском языке. Будьте строги и прямолинейны.
-
-      [SKILL ACTIVE: MULTI-AGENT-OPTIMIZER]
-      Привлечете для критики 3 виртуальные персоны: 'Senior DevOps', 'Security Auditor' и 'UX Researcher'. Пусть каждая персона последовательно выскажет по 2 критических замечания от своего лица.
-    `;
-
-    try {
-      const criticFeedback = await this.generateContent(
-        apiKey,
-        model,
-        [{ role: 'user', parts: getParts(critiquePrompt) }],
-        { systemInstruction: "You are a senior software architect and relentless QA reviewer." }
-      );
-
-      let refinementPrompt = `Вы — высококлассный технический писатель и L3 редактор iRidium.
-        Изучите черновик статьи, составленный ранее:
-        ---
-        ${draft.markdown}
-        ---
-
-        А также изучите конструктивные критические замечания:
-        ---
-        ${criticFeedback}
-        ---
-
-        Ваша задача — полностью доработать текст статьи с учётом ВСЕЙ критики. Исправьте неточности, улучшите структуру, удалите лишнюю "воду" и сделайте статью безупречной. Восстановите итоговый текст статьи в Markdown.
-        Возвращайте СТРОГО JSON следующего формата:
-        {
-          "thinking": "как вы доработали статью на основе замечаний",
-          "markdown": "доработанный итоговый текст статьи в формате Markdown"
-        }
-
-        [SKILL ACTIVE: ORCHESTRATION-IMPROVE]
-        Автоматически извлеките уроки из допущенных коллегой ошибок. В блоке "thinking" детально опишите паттерн ошибки, чтобы следующая итерация генерации не допустила подобных неточностей.
-      `;
-
-      const refinementText = await this.generateContent(
-        apiKey,
-        model,
-        [{ role: 'user', parts: getParts(refinementPrompt) }],
-        {
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: "object",
-            properties: {
-              thinking: { type: "string" },
-              markdown: { type: "string" }
-            },
-            required: ["thinking", "markdown"]
-          },
-          systemInstruction: sysInstruction
-        }
-      );
-      const refined = extractJson(refinementText);
-      if (refined.markdown) {
-        finalDraftMarkdown = refined.markdown;
-        consensusTh = `\n\nКритика Архитектора:\n${criticFeedback}\n\nРедактор:\n${refined.thinking || ""}`;
-      }
-    } catch (err: any) {
-      console.error("Agents consensus backend failed, fallback to draft:", err);
-    }
-
-    // --- STAGE 4: REVIEW (NotebookLM Key Insights ALWAYS ON) ---
+    // --- STAGE 3: FINAL REVIEW ---
     let reviewPrompt = `
-      Вы — Главный Редактор Базы Знаний iRidium. 
-      Ваша задача — провести финальное рецензирование статьи, убрать любые возможные опечатки и сформировать метаданные (теги, краткое описание).
-
-      ЦЕЛЬ ЗАДАЧИ: ${goal}
-
-      ЧЕРНОВИК ДЛЯ ПРОВЕРКИ:
-      ${finalDraftMarkdown}
-
-      Сгенерируйте итоговый улучшенный текст, добавьте теги и краткое описание (в соответствующих полях JSON, НЕ в самом тексте).
-      Важно: В поле "description" (краткое описание) составьте содержательное краткое резюме (summary) статьи, состоящее ровно из 3 полноценных предложений на русском языке.
-      ВАЖНО: Поле "markdown" не должно содержать технических характеристик пар ключ-значение (tags, priority, target_book, my_category и т.д.) или фрагментов вроде YAML front-matter в начале или конце текста. Если они случайно сгенерировались в "ЧЕРНОВИК ДЛЯ ПРОВЕРКИ", безвозвратно удалите их из итогового текста "markdown". Текст должен быть только для чтения.
-
-      [SKILL ACTIVE: NOTEBOOKLM-DIGEST]
-      Обязательно добавьте в самый конец итогового текста "markdown" специальный структурированный блок:
-      ## 💡 Ключевые Инсайты (NotebookLM)
-      Сформулируйте ровно 3 ключевых интеллектуальных инсайта, неочевидных технических факта или полезных вывода на основе исходных источников в виде краткого маркированного списка.
+      Финальное рецензирование статьи. Сформируйте теги и краткое описание (3 предложения).
+      ЦЕЛЬ: ${goal}
+      ЧЕРНОВИК: ${draft.markdown}
+      Добавьте блок: ## 💡 Ключевые Инсайты (NotebookLM) с 3 фактами в конце.
     `;
 
-    const reviewText = await this.generateContent(
+    const reviewResult = await this.generateContent(
       apiKey,
-      model,
+      currentActiveModel,
       [{ role: 'user', parts: getParts(reviewPrompt) }],
       {
         responseMimeType: 'application/json',
@@ -449,12 +382,13 @@ export class GeminiService {
         systemInstruction: sysInstruction
       }
     );
-    const review = extractJson(reviewText);
+    currentActiveModel = reviewResult.modelUsed;
+    const review = extractJson(reviewResult.text);
 
-    const finalMarkdown = generateTableOfContents(review.markdown || finalDraftMarkdown);
+    const finalMarkdown = generateTableOfContents(review.markdown || draft.markdown);
 
     return {
-      thinking: "План: " + (plan.thinking || "") + "\n\nДрафт: " + (draft.thinking || "") + consensusTh + "\n\nРевью: " + (review.thinking || ""),
+      thinking: "План: " + (plan.thinking || "") + "\n\nДрафт: " + (draft.thinking || "") + "\n\nРевью: " + (review.thinking || ""),
       title: plan.title || "Новая статья",
       markdown: finalMarkdown,
       tags: review.tags || [],
@@ -462,7 +396,8 @@ export class GeminiService {
       targetBookId: plan.targetBookId || null,
       targetChapterId: plan.targetChapterId || null,
       newBookName: plan.newBookName || "",
-      newChapterName: plan.newChapterName || ""
+      newChapterName: plan.newChapterName || "",
+      modelUsed: currentActiveModel
     };
   }
 }

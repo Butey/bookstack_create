@@ -131,15 +131,17 @@ export function AgentSkillsPanel({
 
   const handleCreateNewPreset = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newPresetName.trim()) {
+    const cleanName = newPresetName.trim();
+    if (!cleanName) {
       setOptimizeMessage('Ошибка: Укажите имя профиля');
       setTimeout(() => setOptimizeMessage(''), 3000);
       return;
     }
+
     const newId = `custom-preset-${Date.now()}`;
     const newPreset = {
       id: newId,
-      name: newPresetName.trim(),
+      name: cleanName,
       description: newPresetDesc.trim() || 'Пользовательский профиль навыков',
       systemInstruction,
       dataStructure,
@@ -246,9 +248,15 @@ export function AgentSkillsPanel({
               </div>
 
               <button
-                onClick={() => setIsSavingNewPreset(prev => !prev)}
+                onClick={() => {
+                  if (!isSavingNewPreset) {
+                    setNewPresetName('');
+                    setNewPresetDesc('');
+                  }
+                  setIsSavingNewPreset(prev => !prev);
+                }}
                 className="flex items-center gap-0.5 b-1 border border-editorial-text bg-white px-2 py-1 hover:bg-gray-100 font-mono text-[9px] uppercase font-bold text-editorial-text cursor-pointer active:scale-95"
-                title="Сохранить текущую конфигурацию как новый профиль"
+                title="Создать новый профиль как копию текущего"
               >
                 <Plus size={10} />
                 <span>Новый</span>

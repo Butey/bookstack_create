@@ -27,6 +27,8 @@ export async function bookstackProxy(
     url,
     data,
     credentials
+  }, {
+    timeout: 600000 // 10 minutes timeout to prevent hanging UI
   });
   return response.data;
 }
@@ -35,16 +37,28 @@ export async function fetchBooks(credentials: BookStackCredentials, onUpdate?: (
   const cacheKey = `books-${credentials.baseUrl}`;
   const cached = responseCache.get(cacheKey);
 
-  const fetchPromise = bookstackProxy(credentials, 'GET', '/api/books?count=200').then((data: any) => {
-    const result = data.data || [];
-    if (!Array.isArray(result)) return [];
-    
-    if (JSON.stringify(cached) !== JSON.stringify(result)) {
-      responseCache.set(cacheKey, result);
-      if (onUpdate && cached) onUpdate(result);
+  const fetchPromise = (async () => {
+    let offset = 0;
+    const count = 50; // Уменьшенный размер пакета для избежания 503 таймаутов
+    let allBooks: any[] = [];
+    let total = 0;
+
+    do {
+      const response: any = await bookstackProxy(credentials, 'GET', `/api/books?count=${count}&offset=${offset}`);
+      const result = response.data || [];
+      if (!Array.isArray(result) || result.length === 0) break;
+      
+      allBooks = allBooks.concat(result);
+      total = response.total || 0;
+      offset += count;
+    } while (allBooks.length < total && offset < 1000); // Ограничение в 1000 книг (20 запросов по 50) для безопасности
+
+    if (JSON.stringify(cached) !== JSON.stringify(allBooks)) {
+      responseCache.set(cacheKey, allBooks);
+      if (onUpdate && cached) onUpdate(allBooks);
     }
-    return result;
-  });
+    return allBooks;
+  })();
 
   if (cached) {
     fetchPromise.catch((err) => console.error('Фоновое обновление списка книг завершилось ошибкой:', err));
@@ -121,7 +135,7 @@ export async function fetchPageContent(credentials: BookStackCredentials, pageId
 }
 
 export async function searchPages(credentials: BookStackCredentials, query: string) {
-  const data = await bookstackProxy(credentials, 'GET', `/api/search?query=${encodeURIComponent(query)}`);
+  const data = await bookstackProxy(credentials, 'GET', `/api/search?query=${encodeURIComponent(query)}&count=5`);
   return data.data; // BookStack поиск возвращает { data: [...results] }
 }
 

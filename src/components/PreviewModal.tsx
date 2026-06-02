@@ -1,8 +1,9 @@
 import { motion } from 'motion/react';
-import { FileText, X, Terminal } from 'lucide-react';
+import { FileText, X, Terminal, User, Calendar, Book } from 'lucide-react';
+import { Source } from '../types';
 
 interface PreviewModalProps {
-  previewSource: { name: string; content: string };
+  previewSource: Source;
   setPreviewSource: (v: null) => void;
   onAnalyzeLogs?: (content: string, name: string) => void;
 }
@@ -24,13 +25,31 @@ export function PreviewModal({ previewSource, setPreviewSource, onAnalyzeLogs }:
         onClick={e => e.stopPropagation()}
       >
         <div className="p-4 border-b border-editorial-text flex items-center justify-between bg-white">
-          <div className="flex items-center gap-2">
-            <FileText className="text-editorial-text" size={18} />
-            <h3 className="font-serif font-bold text-gray-900">{previewSource.name}</h3>
+          <div className="flex flex-col gap-1 overflow-hidden">
+            <div className="flex items-center gap-2">
+              <FileText className="text-editorial-text" size={18} />
+              <h3 className="font-serif font-bold text-gray-900 truncate">{previewSource.metadata?.title || previewSource.name}</h3>
+            </div>
+            {previewSource.metadata && (previewSource.metadata.author || previewSource.metadata.creationDate) && (
+              <div className="flex items-center gap-4 text-[9px] text-gray-400 uppercase tracking-widest pl-6">
+                {previewSource.metadata.author && (
+                  <div className="flex items-center gap-1">
+                    <User size={10} />
+                    <span>{previewSource.metadata.author}</span>
+                  </div>
+                )}
+                {previewSource.metadata.creationDate && (
+                  <div className="flex items-center gap-1">
+                    <Calendar size={10} />
+                    <span>{previewSource.metadata.creationDate}</span>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
           <button 
             onClick={() => setPreviewSource(null)}
-            className="p-2 hover:bg-editorial-accent transition-colors"
+            className="p-2 hover:bg-editorial-accent transition-colors shrink-0"
           >
             <X size={20} />
           </button>

@@ -25,6 +25,8 @@ interface KnowledgeSyncPanelProps {
 
   // Actions
   handleSync: () => void;
+  loadChaptersAndPages: (id: number) => Promise<void>;
+  loadChapterPages: (id: number) => Promise<void>;
   executionControl: any;
   sourcesLength: number;
   contentLength: number;
@@ -42,7 +44,8 @@ export function KnowledgeSyncPanel({
   customTags, setCustomTags,
   books, chapters, pages,
   isLoadingBooks, isLoadingChapters, isLoadingPages,
-  handleSync, executionControl, sourcesLength, contentLength,
+  handleSync, loadChaptersAndPages, loadChapterPages,
+  executionControl, sourcesLength, contentLength,
   handleGenerateMindmap, handleGenerateFAQ, handleGenerateMermaid, setIsConfigOpen
 }: KnowledgeSyncPanelProps) {
   return (
@@ -77,9 +80,13 @@ export function KnowledgeSyncPanel({
                 value={selectedBookId || ''}
                 onChange={(e) => {
                   const id = Number(e.target.value) || null;
-                  setSelectedBookId(id);
-                  setSelectedChapterId(null);
-                  setSelectedPageId(null);
+                  if (id) {
+                    loadChaptersAndPages(id);
+                  } else {
+                    setSelectedBookId(null);
+                    setSelectedChapterId(null);
+                    setSelectedPageId(null);
+                  }
                 }}
                 disabled={isLoadingBooks || books.length === 0}
               >
@@ -97,8 +104,12 @@ export function KnowledgeSyncPanel({
                 value={selectedChapterId || ''}
                 onChange={(e) => {
                   const id = Number(e.target.value) || null;
-                  setSelectedChapterId(id);
-                  setSelectedPageId(null);
+                  if (id) {
+                    loadChapterPages(id);
+                  } else {
+                    setSelectedChapterId(null);
+                    setSelectedPageId(null);
+                  }
                 }}
                 disabled={(!selectedBookId && targetMode === 'update') || isLoadingChapters}
               >

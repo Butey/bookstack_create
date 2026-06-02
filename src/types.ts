@@ -43,6 +43,23 @@ export interface BookStackPage {
   tags?: { name: string; value: string } [];
 }
 
+export interface SourceMetadata {
+  title?: string;
+  author?: string;
+  creationDate?: string;
+}
+
+export interface Source {
+  name: string;
+  content: string;
+  selected?: boolean;
+  isDuplicate?: boolean;
+  isContext?: boolean;
+  duplicateReference?: string;
+  metadata?: SourceMetadata;
+  attachments?: { mimeType: string; data: string; name: string }[];
+}
+
 export interface ProcessedArticle {
   title: string;
   content: string;
@@ -59,4 +76,6 @@ export interface ProcessedArticle {
   targetChapterId?: number | null;
   newChapterName?: string;
   duplicateLinks?: string[];
+  originalMarkdown?: string;
+  originalTitle?: string;
 }
