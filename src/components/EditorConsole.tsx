@@ -18,7 +18,8 @@ import {
   Info,
   FileText,
   SplitSquareHorizontal,
-  CheckCircle
+  CheckCircle,
+  Download
 } from 'lucide-react';
 import { AEMarkdown } from './AEMarkdown';
 import { ProcessedArticle } from '../types';
@@ -44,6 +45,10 @@ interface EditorConsoleProps {
   sources: { name: string; content: string; selected?: boolean }[];
   setSyncStatus: React.Dispatch<React.SetStateAction<{ type: 'success' | 'error' | 'idle', message: string, url?: string }>>;
   books: any[];
+  versionHistory: { id: string; timestamp: string; article: ProcessedArticle; label?: string }[];
+  setVersionHistory: React.Dispatch<React.SetStateAction<{ id: string; timestamp: string; article: ProcessedArticle; label?: string }[]>>;
+  saveVersionToHistory: (article: ProcessedArticle, customLabel?: string) => void;
+  rollbackToVersion: (versionId: string) => void;
 }
 
 export const EditorConsole = React.memo(function EditorConsole({
@@ -66,11 +71,51 @@ export const EditorConsole = React.memo(function EditorConsole({
   chatHistory,
   sources,
   setSyncStatus,
-  books
+  books,
+  versionHistory,
+  setVersionHistory,
+  saveVersionToHistory,
+  rollbackToVersion
 }: EditorConsoleProps) {
   const [diffMode, setDiffMode] = useState(false);
   
+  const handleDownloadMarkdown = () => {
+    if (!lastResponse || !lastResponse.markdown) return;
+    
+    // Build complete markdown document with Title and metadata
+    const headerTitle = lastResponse.title ? `# ${lastResponse.title}\n\n` : '';
+    const headerDesc = lastResponse.description ? `> ${lastResponse.description}\n\n` : '';
+    const headerTags = (lastResponse.tags && lastResponse.tags.length > 0) 
+      ? `## Метки\n${lastResponse.tags.map(t => `* ${t}`).join('\n')}\n\n`
+      : '';
+    
+    const fileContent = `${headerTitle}${headerDesc}${headerTags}## Текст\n\n${lastResponse.markdown}`;
+    
+    // Create UTF-8 BLOB for perfect Russian Cyrillic rendering
+    const blob = new Blob([fileContent], { type: 'text/markdown;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    
+    // Sanitize filename
+    const cleanFileName = (lastResponse.title || 'статья')
+      .replace(/[|&;$%@"<>()+,/:\\]/g, '')
+      .substring(0, 50)
+      .trim();
+    
+    link.setAttribute('download', `${cleanFileName}.md`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleDownloadPDF = () => {
+    window.print();
+  };
+  
   return (
+    <>
     <AnimatePresence>
       {isConsoleOpen && (
         <>
@@ -193,20 +238,40 @@ export const EditorConsole = React.memo(function EditorConsole({
                   {/* Article Draft Preview */}
                   {lastResponse.markdown && (
                     <section>
-                      <div className="flex items-center justify-between mb-4">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
                         <div className="flex items-center gap-2">
                           <FileText size={16} className="text-editorial-text" />
                           <h3 className="text-[11px] font-bold uppercase tracking-[0.2em] text-editorial-text">Черновик статьи</h3>
                         </div>
-                        {lastResponse.targetPublishMode === 'update' && lastResponse.originalMarkdown && (
+                        <div className="flex items-center gap-2">
+                          {lastResponse.targetPublishMode === 'update' && lastResponse.originalMarkdown && (
+                            <button 
+                              onClick={() => setDiffMode(!diffMode)}
+                              className={`flex items-center gap-1 px-2 py-1 border border-editorial-text text-[9px] uppercase font-bold transition-all ${diffMode ? 'bg-editorial-text text-white' : 'bg-transparent text-editorial-text hover:bg-editorial-accent/20'}`}
+                            >
+                              <SplitSquareHorizontal size={12} />
+                              {diffMode ? 'Скрыть Diff View' : 'Diff View'}
+                            </button>
+                          )}
+                          
                           <button 
-                            onClick={() => setDiffMode(!diffMode)}
-                            className={`flex items-center gap-1 px-2 py-1 border border-editorial-text text-[9px] uppercase font-bold transition-all ${diffMode ? 'bg-editorial-text text-white' : 'bg-transparent text-editorial-text hover:bg-editorial-accent/20'}`}
+                            onClick={handleDownloadMarkdown}
+                            className="flex items-center gap-1 px-2.5 py-1 border border-editorial-text bg-[#F5F5F3] hover:bg-editorial-accent text-editorial-text text-[9px] uppercase font-bold transition-all cursor-pointer shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-none active:scale-95"
+                            title="Скачать статью в формате Markdown (.md)"
                           >
-                            <SplitSquareHorizontal size={12} />
-                            {diffMode ? 'Скрыть Diff View' : 'Diff View'}
+                            <Download size={11} className="text-editorial-text" />
+                            MD
                           </button>
-                        )}
+                          
+                          <button 
+                            onClick={handleDownloadPDF}
+                            className="flex items-center gap-1 px-2.5 py-1 border border-editorial-text bg-[#F5F5F3] hover:bg-editorial-accent text-editorial-text text-[9px] uppercase font-bold transition-all cursor-pointer shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-none active:scale-95"
+                            title="Экспортировать статью в PDF"
+                          >
+                            <Download size={11} className="text-editorial-text" />
+                            PDF
+                          </button>
+                        </div>
                       </div>
                       
                       {diffMode && lastResponse.originalMarkdown ? (
@@ -269,6 +334,105 @@ export const EditorConsole = React.memo(function EditorConsole({
                       <p className="text-[8px] text-gray-400 mt-2 uppercase tracking-widest text-center italic">Агент перегенерирует контент на основе ваших слов</p>
                     </section>
                   )}
+
+                  {/* История версий */}
+                  <section className="bg-white border-2 border-editorial-text p-4 shadow-[4px_4px_0px_0px_rgba(26,26,26,1)]">
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-2">
+                        <History size={16} className="text-editorial-text" />
+                        <h3 className="text-[11px] font-bold uppercase tracking-[0.2em] text-editorial-text">История версий</h3>
+                      </div>
+                      <span className="text-[9px] font-bold px-2 py-0.5 bg-editorial-accent text-editorial-text uppercase tracking-wider">
+                        {versionHistory.length} верс.
+                      </span>
+                    </div>
+
+                    {/* Manual Save Button */}
+                    <div className="flex gap-2 mb-4">
+                      <input 
+                        type="text"
+                        placeholder="Название версии (необязательно)"
+                        className="flex-1 p-1.5 border border-editorial-text text-[10px] outline-none font-medium placeholder:font-normal placeholder:text-gray-400 focus:bg-editorial-accent/5 focus:border-editorial-text"
+                        id="custom-version-label-input"
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            const input = e.target as HTMLInputElement;
+                            const text = input.value.trim();
+                            if (lastResponse) {
+                              saveVersionToHistory(lastResponse, text || undefined);
+                              input.value = '';
+                            }
+                          }
+                        }}
+                      />
+                      <button 
+                        onClick={() => {
+                          const input = document.getElementById('custom-version-label-input') as HTMLInputElement;
+                          const text = input ? input.value.trim() : '';
+                          if (lastResponse) {
+                            saveVersionToHistory(lastResponse, text || undefined);
+                            if (input) input.value = '';
+                          }
+                        }}
+                        className="px-3 py-1.5 bg-[#F5F5F3] hover:bg-editorial-accent text-editorial-text border border-editorial-text text-[9px] font-bold uppercase tracking-wider transition-colors shrink-0 shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-none cursor-pointer"
+                      >
+                        Сохранить версию
+                      </button>
+                    </div>
+
+                    {/* Version History List */}
+                    {versionHistory.length === 0 ? (
+                      <div className="text-center py-6 border border-dashed border-gray-300 text-gray-400 text-[10px] uppercase tracking-widest font-medium bg-gray-50/50">
+                        История версий пуста
+                      </div>
+                    ) : (
+                      <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1.5 custom-scrollbar">
+                        {versionHistory.map((version) => {
+                          const isActive = lastResponse && lastResponse.markdown === version.article.markdown && lastResponse.title === version.article.title;
+                          return (
+                            <div 
+                              key={version.id} 
+                              className={`flex items-center justify-between p-2 border transition-all ${
+                                isActive ? 'bg-editorial-accent border-editorial-text' : 'bg-[#F9F9F7] border-gray-200 hover:border-editorial-text/30'
+                              }`}
+                            >
+                              <div className="flex-1 min-w-0 pr-3">
+                                <span className="block text-[8px] font-mono text-gray-400 font-semibold uppercase">{version.timestamp}</span>
+                                <span className={`block text-[10px] font-bold truncate ${isActive ? 'text-editorial-text' : 'text-gray-700'}`} title={version.label || version.article.title}>
+                                  {version.label || version.article.title || 'Без названия'}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <button 
+                                  onClick={() => rollbackToVersion(version.id)}
+                                  disabled={isActive}
+                                  className={`px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wider border transition-all ${
+                                    isActive 
+                                      ? 'border-gray-200 bg-white text-gray-400 cursor-default' 
+                                      : 'border-editorial-text bg-white text-editorial-text hover:bg-editorial-text hover:text-white cursor-pointer active:scale-95 shadow-[1px_1px_0px_0px_rgba(26,26,26,1)] hover:shadow-none'
+                                  }`}
+                                >
+                                  {isActive ? 'Текущая' : 'Откатить'}
+                                </button>
+                                <button 
+                                  onClick={() => {
+                                    setVersionHistory((prev: any[]) => prev.filter(v => v.id !== version.id));
+                                  }}
+                                  className="text-gray-400 hover:text-red-500 transition-colors p-1 cursor-pointer"
+                                  title="Удалить версию из истории"
+                                >
+                                  <X size={10} />
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                    <span className="block text-[8px] text-gray-400 mt-2 uppercase tracking-widest text-center italic leading-tight">
+                      Черновики сохраняются автоматически перед запуском и уточнением агента
+                    </span>
+                  </section>
 
                   {/* Метаданные */}
                   <section>
@@ -500,5 +664,29 @@ export const EditorConsole = React.memo(function EditorConsole({
         </>
       )}
     </AnimatePresence>
+
+    {/* Printable output view optimized for PDF generation */}
+    {lastResponse && (
+      <div id="print-section-root" className="hidden print:block bg-white text-black min-h-screen p-12">
+        <h1 className="printed-title">{lastResponse.title || 'Без названия'}</h1>
+        
+        {lastResponse.description && (
+          <div className="printed-desc">
+            {lastResponse.description}
+          </div>
+        )}
+        
+        {(lastResponse.tags && lastResponse.tags.length > 0) && (
+          <div className="printed-meta">
+            <strong>Метки:</strong> {lastResponse.tags.join(', ')}
+          </div>
+        )}
+        
+        <div className="printed-markdown prose prose-neutral max-w-none">
+          <AEMarkdown>{lastResponse.markdown}</AEMarkdown>
+        </div>
+      </div>
+    )}
+    </>
   );
 });

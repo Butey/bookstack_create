@@ -124,10 +124,10 @@ export class GeminiService {
         }
 
         const isQuotaError = statusCode === 429 || errStr.includes('429') || errStr.includes('Quota exceeded') || errStr.includes('RESOURCE_EXHAUSTED');
-        const isRetryable = statusCode === 503 || errStr.includes('503') ||
+        const isOverloadError = statusCode === 503 || errStr.includes('503') ||
                       errStr.includes('high demand') || errStr.includes('UNAVAILABLE') || 
-                      errStr.includes('temporarily overloaded') || errStr.includes('REQUEST_TIMEOUT') ||
-                      isQuotaError;
+                      errStr.includes('temporarily overloaded') || errStr.includes('REQUEST_TIMEOUT');
+        const isRetryable = isOverloadError || isQuotaError;
         
         if (isRetryable && attempt < retries) {
           // Robust exponential backoff with jitter
@@ -142,10 +142,12 @@ export class GeminiService {
             }
           }
 
-          if (isQuotaError) {
-             console.warn(`[GeminiService] Quota hit for ${currentModel}.`);
+          // Automatically switch model if quota exceeded or if we hit a service overload and it is not the first attempt
+          const shouldSwitchModel = isQuotaError || (isOverloadError && attempt >= 1);
+          if (shouldSwitchModel) {
+             console.warn(`[GeminiService] Quota hit or service overload for ${currentModel}.`);
              
-             // AUTOMATIC SWITCH: If quota hit, try to switch to a more stable model in the fallback list
+             // AUTOMATIC SWITCH: Try to switch to a more stable model in the fallback list
              if (fallbackIdx < fallbacks.length) {
                let nextModel = fallbacks[fallbackIdx];
                // Don't switch to itself
@@ -155,16 +157,16 @@ export class GeminiService {
                }
                
                if (nextModel && nextModel !== currentModel) {
-                 console.warn(`[GeminiService] Switching model ${currentModel} -> ${nextModel} due to quota limit.`);
+                 console.warn(`[GeminiService] Switching model ${currentModel} -> ${nextModel} to bypass error/overload.`);
                  currentModel = nextModel;
                  // After switching, we can try with a slightly smaller delay
                  delay = 1000 + Math.random() * 1000;
                  fallbackIdx++;
                } else {
-                 delay += 10000; // Extra wait if no more fallbacks
+                 delay += 5000; // Extra wait if no more fallbacks
                }
              } else {
-               delay += 10000; 
+               delay += 5000; 
              }
           }
           
@@ -269,11 +271,55 @@ export class GeminiService {
         )
       : '';
 
+    const SUPPORTED_IMAGE_TYPES = [
+      'image/png',
+      'image/jpeg',
+      'image/jpg',
+      'image/webp',
+      'image/gif',
+      'image/heic',
+      'image/heif'
+    ];
+
     const getParts = (promptText: string) => {
       const parts: any[] = [{ text: promptText }];
       if (attachments && attachments.length > 0) {
         attachments.forEach(a => {
-          parts.push({ inlineData: { mimeType: a.mimeType, data: a.data } });
+          // 1. Only allow actual, standard web image attachments to prevent "Unable to process input" errors in standard models.
+          // PDF content is already extracted and present in optimizedSources.
+          if (!a.mimeType || !SUPPORTED_IMAGE_TYPES.includes(a.mimeType.toLowerCase().trim())) {
+            return;
+          }
+          
+          let cleanData = a.data || '';
+          // 2. Strip potential data-URI base64 prefix
+          if (cleanData.includes(';base64,')) {
+            cleanData = cleanData.split(';base64,')[1];
+          }
+          
+          // 3. Robust base64 cleaning: strip any spacing, tabs, newlines, system carriage returns
+          cleanData = cleanData.replace(/[\s\r\n]+/g, '');
+          
+          // 4. Safe check: prevent sending text (like HTML login page error) disguised as an image.
+          // We can check if the decoded first characters start with an HTML/text pattern.
+          if (cleanData) {
+            try {
+              const prefixDecoded = Buffer.from(cleanData.slice(0, 48), 'base64').toString('utf8').trim().toLowerCase();
+              if (prefixDecoded.startsWith('<html') || prefixDecoded.startsWith('<!doc') || prefixDecoded.startsWith('<div') || prefixDecoded.startsWith('<?xml')) {
+                console.warn(`[GeminiService] Dropping attachment ${(a as any).name || 'unnamed'} because decoded base64 looks like HTML/XML: "${prefixDecoded.slice(0, 20)}"`);
+                return;
+              }
+            } catch (e) {
+              // Ignore decoding failure
+            }
+
+            parts.push({
+              inlineData: {
+                mimeType: a.mimeType.toLowerCase().trim(),
+                data: cleanData
+              }
+            });
+          }
         });
       }
       return parts;
@@ -282,7 +328,7 @@ export class GeminiService {
     let sysInstruction = (systemInstruction || "Вы — профессиональный технический писатель и редактор.") + 
       "\n\n[COGNITIVE AMPLIFIER ACTIVE: INFINITE GRATITUDE]\nГарантируйте 100% следование структуре, размечайте элементы с точностью. Избегайте пустых мета-тегов и YAML в тексте Markdown.";
 
-    const hasImages = (attachments && attachments.some(a => a.mimeType.startsWith('image/'))) ||
+    const hasImages = (attachments && attachments.some(a => a.mimeType && SUPPORTED_IMAGE_TYPES.includes(a.mimeType.toLowerCase().trim()))) ||
                       (sources && (sources.includes('data:image/') || /!\[.*?\]\(/i.test(sources)));
     if (hasImages) {
       sysInstruction += "\n\n[STAGE SKILL ACTIVE: COMPUTER-VISION]\nПроведите глубокий визуальный технический анализ изображений: извлеките текст (OCR), параметры и схемы.";

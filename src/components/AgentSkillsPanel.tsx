@@ -215,7 +215,7 @@ export function AgentSkillsPanel({
               >
                 {allPresets.map((p) => (
                   <option key={p.id} value={p.id}>
-                    {p.name} {p.isCustom ? ' (Свой)' : ''}
+                    {p.name}
                   </option>
                 ))}
               </select>

@@ -14,6 +14,7 @@ export function useFileUpload(
     checkPauseAndAbort: () => Promise<void>;
     startTask: (steps: { step: number; total: number; label: string }) => void;
     setSyncStatus: React.Dispatch<React.SetStateAction<{ type: "success" | "error" | "idle"; message: string; url?: string | undefined; }>>;
+    setIsSyncing: React.Dispatch<React.SetStateAction<boolean>>;
   },
   activeSkills: Record<string, boolean>,
   pdfExtractionMode: 'gemini' | 'markitdown'
@@ -28,91 +29,94 @@ export function useFileUpload(
     
     const totalWeightPerFile = 100 / files.length;
 
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      const basePercent = i * totalWeightPerFile;
-      const prefix = files.length > 1 ? `[${i + 1}/${files.length}] ` : '';
-      
-      executionControl.setSyncStatus({ type: 'idle', message: `${prefix}Чтение ${file.name}...` });
-      setUploadProgress({ percent: Math.round(basePercent), label: `${prefix}Отправка ${file.name}...` });
-      
-      try {
-        await executionControl.checkPauseAndAbort();
-        const formData = new FormData();
-        formData.append('file', file);
-        formData.append('useMarkItDown', String(pdfExtractionMode === 'markitdown'));
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const basePercent = i * totalWeightPerFile;
+        const prefix = files.length > 1 ? `[${i + 1}/${files.length}] ` : '';
         
-        const response = await axios.post('/api/process-source', formData, {
-          headers: { 'Content-Type': 'multipart/form-data' },
-          signal: executionControl.abortControllerRef.current?.signal,
-          timeout: 600000,
-          onUploadProgress: (progressEvent) => {
-            if (progressEvent.total) {
-              const fileUploadPercent = (progressEvent.loaded / progressEvent.total) * 100;
-              const percentCompleted = basePercent + (fileUploadPercent * 0.5 * (totalWeightPerFile / 100));
-              setUploadProgress({ 
-                percent: Math.min(Math.round(percentCompleted), 99), 
-                label: `${prefix}Отправка ${file.name}...` 
-              });
-            }
-          }
-        });
+        executionControl.setSyncStatus({ type: 'idle', message: `${prefix}Чтение ${file.name}...` });
+        setUploadProgress({ percent: Math.round(basePercent), label: `${prefix}Отправка ${file.name}...` });
         
-        const base64Str = response.data.base64;
-        const mimeType = response.data.mimeType || file.type || 'text/plain';
-        const metadata = response.data.metadata;
-        const markitdownText = response.data.markitdownText;
-        const isParsedLocally = response.data.isParsedLocally;
-        
-        let extractedText = '';
-        if (isParsedLocally && markitdownText) {
-          extractedText = markitdownText;
-          setUploadProgress({ percent: Math.round(basePercent + totalWeightPerFile), label: `${prefix}Распознано локально (MarkItDown)` });
-        } else {
-          const extractionStartPercent = basePercent + (totalWeightPerFile * 0.5);
-          setUploadProgress({ percent: Math.round(extractionStartPercent), label: `${prefix}Агент читает текст...` });
-          executionControl.setSyncStatus({ type: 'idle', message: `${prefix}Агент извлекает текст из ${file.name}...` });
-          
-          extractedText = await extractTextFromFile(base64Str, mimeType, geminiModel, {
-            signal: executionControl.abortControllerRef.current?.signal,
-            checkPause: executionControl.checkPauseAndAbort,
-            activeSkills
-          });
-        }
-        
-        const attachList = [];
-        if (mimeType.startsWith('image/') || mimeType === 'application/pdf') {
-          attachList.push({ name: file.name, mimeType, data: base64Str });
-        }
-        
-        setSources(prev => [...prev, { 
-          name: file.name, 
-          content: extractedText, 
-          attachments: attachList.length ? attachList : undefined,
-          metadata: metadata
-        }]);
-
-        // Index the file into vector store
         try {
-          await indexVectorDocument(`file:${Date.now()}_${file.name}`, extractedText, {
-            name: file.name,
-            type: 'uploaded_file',
-            ...metadata
+          await executionControl.checkPauseAndAbort();
+          const formData = new FormData();
+          formData.append('file', file);
+          formData.append('useMarkItDown', String(pdfExtractionMode === 'markitdown'));
+          
+          const response = await axios.post('/api/process-source', formData, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+            signal: executionControl.abortControllerRef.current?.signal,
+            timeout: 600000,
+            onUploadProgress: (progressEvent) => {
+              if (progressEvent.total) {
+                const fileUploadPercent = (progressEvent.loaded / progressEvent.total) * 100;
+                const percentCompleted = basePercent + (fileUploadPercent * 0.5 * (totalWeightPerFile / 100));
+                setUploadProgress({ 
+                  percent: Math.min(Math.round(percentCompleted), 99), 
+                  label: `${prefix}Отправка ${file.name}...` 
+                });
+              }
+            }
           });
-        } catch (err) {
-          console.error('Failed to index file to vector DB', err);
-        }
+          
+          const base64Str = response.data.base64;
+          const mimeType = response.data.mimeType || file.type || 'text/plain';
+          const metadata = response.data.metadata;
+          const markitdownText = response.data.markitdownText;
+          const isParsedLocally = response.data.isParsedLocally;
+          
+          let extractedText = '';
+          if (isParsedLocally && markitdownText) {
+            extractedText = markitdownText;
+            setUploadProgress({ percent: Math.round(basePercent + totalWeightPerFile), label: `${prefix}Распознано локально (MarkItDown)` });
+          } else {
+            const extractionStartPercent = basePercent + (totalWeightPerFile * 0.5);
+            setUploadProgress({ percent: Math.round(extractionStartPercent), label: `${prefix}Агент читает текст...` });
+            executionControl.setSyncStatus({ type: 'idle', message: `${prefix}Агент извлекает текст из ${file.name}...` });
+            
+            extractedText = await extractTextFromFile(base64Str, mimeType, geminiModel, {
+              signal: executionControl.abortControllerRef.current?.signal,
+              checkPause: executionControl.checkPauseAndAbort,
+              activeSkills
+            });
+          }
+          
+          const attachList = [];
+          if (mimeType.startsWith('image/') || mimeType === 'application/pdf') {
+            attachList.push({ name: file.name, mimeType, data: base64Str });
+          }
+          
+          setSources(prev => [...prev, { 
+            name: file.name, 
+            content: extractedText, 
+            attachments: attachList.length ? attachList : undefined,
+            metadata: metadata
+          }]);
 
-        executionControl.setSyncStatus({ type: 'success', message: `${prefix}Источник "${file.name}" добавлен.` });
-        
-        setUploadProgress({ percent: Math.round(basePercent + totalWeightPerFile), label: `${prefix}Завершено` });
-      } catch (e: any) {
-        console.error(e);
-        executionControl.setSyncStatus({ type: 'error', message: `Ошибка при обработке ${file.name}: ${e.response?.data?.error || e.message}` });
+          // Index the file into vector store
+          try {
+            await indexVectorDocument(`file:${Date.now()}_${file.name}`, extractedText, {
+              name: file.name,
+              type: 'uploaded_file',
+              ...metadata
+            });
+          } catch (err) {
+            console.error('Failed to index file to vector DB', err);
+          }
+
+          executionControl.setSyncStatus({ type: 'success', message: `${prefix}Источник "${file.name}" добавлен.` });
+          
+          setUploadProgress({ percent: Math.round(basePercent + totalWeightPerFile), label: `${prefix}Завершено` });
+        } catch (e: any) {
+          console.error(e);
+          executionControl.setSyncStatus({ type: 'error', message: `Ошибка при обработке ${file.name}: ${e.response?.data?.error || e.message}` });
+        }
       }
+    } finally {
+      executionControl.setIsSyncing(false);
+      setTimeout(() => setUploadProgress(null), 1000);
     }
-    
-    setTimeout(() => setUploadProgress(null), 1000);
   }, [geminiModel, setSources, executionControl, activeSkills, pdfExtractionMode]);
 
   const handleSpecialFileUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>, target: 'system' | 'structure') => {
@@ -165,6 +169,7 @@ export function useFileUpload(
       console.error(e);
       executionControl.setSyncStatus({ type: 'error', message: `Ошибка импорта: ${e.response?.data?.error || e.message}` });
     } finally {
+      executionControl.setIsSyncing(false);
       setUploadProgress(null);
       e.target.value = '';
     }

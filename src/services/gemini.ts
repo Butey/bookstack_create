@@ -249,8 +249,15 @@ export async function extractTextFromFile(
   _model?: any, // Ignored to force cheap model
   options?: { signal?: AbortSignal, checkPause?: () => Promise<void>, activeSkills?: Record<string, boolean> }
 ) {
-  const safeMimeType = mimeType === 'application/octet-stream' ? 'text/plain' : mimeType;
+  const normMime = (mimeType || '').trim().toLowerCase();
+  const safeMimeType = normMime === 'application/octet-stream' ? 'text/plain' : normMime;
   const parsingModel = 'gemini-3.1-flash-lite';
+
+  let cleanBase64 = base64 || '';
+  if (cleanBase64.includes(';base64,')) {
+    cleanBase64 = cleanBase64.split(';base64,')[1];
+  }
+  cleanBase64 = cleanBase64.replace(/[\s\r\n]+/g, '');
 
   let prompt = `Извлеки весь значимый текст из этого файла. 
     Если это HTML, убери скрипты и стили, верни только контент. 
@@ -272,7 +279,7 @@ export async function extractTextFromFile(
   try {
     const result = await callGemini(
       parsingModel as GeminiModelId,
-      [{ role: 'user', parts: [{ text: prompt }, { inlineData: { data: base64, mimeType: safeMimeType } }] }],
+      [{ role: 'user', parts: [{ text: prompt }, { inlineData: { data: cleanBase64, mimeType: safeMimeType } }] }],
       { signal: options?.signal, checkPause: options?.checkPause }
     );
     return result.text;
@@ -283,7 +290,7 @@ export async function extractTextFromFile(
     }
     if (safeMimeType === 'text/plain') {
       try {
-        const binaryString = atob(base64);
+        const binaryString = atob(cleanBase64);
         const bytes = new Uint8Array(binaryString.length);
         for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
         return new TextDecoder().decode(bytes);

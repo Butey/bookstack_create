@@ -225,13 +225,21 @@ export class OmnideskService {
           try {
             const fileResp = await axios.get(attach.url, { 
               responseType: 'arraybuffer',
-              timeout: 8000 // 8 seconds timeout per attachment
+              timeout: 8000, // 8 seconds timeout per attachment
+              headers: {
+                'Authorization': `Basic ${authString}`
+              }
             });
             if (fileResp.data) {
-              const base64 = Buffer.from(fileResp.data, 'binary').toString('base64');
+              const contentType = String(fileResp.headers['content-type'] || '').toLowerCase();
+              if (contentType.includes('text/html') || contentType.includes('application/json')) {
+                console.warn(`Attachment ${attach.file_name} returned non-binary status/content: ${contentType}`);
+                return;
+              }
+              const base64 = Buffer.from(fileResp.data).toString('base64');
               attachmentsOutput.push({
                 name: attach.file_name,
-                mimeType: attach.mime_type,
+                mimeType: attach.mime_type || contentType || 'application/octet-stream',
                 data: base64
               });
             }

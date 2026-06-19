@@ -8,7 +8,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect, DragEvent, useMemo } from 'react';
+import { useState, useEffect, DragEvent, useMemo, useCallback } from 'react';
 import axios from 'axios';
 import { BookStackCredentials, OmnideskCredentials, ProcessedArticle, Source } from './types';
 import { GEMINI_MODELS, DEFAULT_MODEL, GeminiModelId, analyzeLogsDirectly } from './services/gemini';
@@ -171,6 +171,45 @@ export default function App() {
   
   const [content, setContent] = useState('');
   const [lastResponse, setLastResponse] = useState<ProcessedArticle | null>(null);
+  const [versionHistory, setVersionHistory] = useState<{ id: string; timestamp: string; article: ProcessedArticle; label?: string }[]>([]);
+
+  const saveVersionToHistory = useCallback((article: ProcessedArticle | null, customLabel?: string) => {
+    if (!article || !article.markdown) return;
+    
+    setVersionHistory(prev => {
+      // Prevent pure duplicates within the history list
+      const isDuplicate = prev.some(v => v.article.markdown === article.markdown && v.article.title === article.title);
+      if (isDuplicate && !customLabel) return prev;
+      
+      const now = new Date();
+      const timestampStr = now.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' ' + now.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' });
+      
+      const label = customLabel || `Версия #${prev.length + 1} (${article.title || 'Без названия'})`;
+      const newVersion = {
+        id: Math.random().toString(36).substring(2, 9),
+        timestamp: timestampStr,
+        article: JSON.parse(JSON.stringify(article)),
+        label
+      };
+      
+      return [newVersion, ...prev];
+    });
+  }, []);
+
+  const rollbackToVersion = useCallback((versionId: string) => {
+    const version = versionHistory.find(v => v.id === versionId);
+    if (version) {
+      if (lastResponse && lastResponse.markdown) {
+        const isCurrentSaved = versionHistory.some(v => v.article.markdown === lastResponse.markdown && v.article.title === lastResponse.title);
+        if (!isCurrentSaved) {
+          saveVersionToHistory(lastResponse, `Перед откатом к "${version.label || 'выбранной версии'}"`);
+        }
+      }
+      setLastResponse(JSON.parse(JSON.stringify(version.article)));
+      executionControl.setSyncStatus({ type: 'success', message: 'Откат к выбранной версии выполнен' });
+    }
+  }, [versionHistory, lastResponse, saveVersionToHistory, executionControl.setSyncStatus]);
+
   const [isConsoleOpen, setIsConsoleOpen] = useState(false);
   const [isConfigOpen, setIsConfigOpen] = useState(false);
   const [previewSource, setPreviewSource] = useState<Source | null>(null);
@@ -430,6 +469,13 @@ root_cause_category: "[Category]"
     activeSkills
   });
 
+  const handleSyncWithHistory = useCallback(async (pregeneratedContent?: string) => {
+    if (lastResponse) {
+      saveVersionToHistory(lastResponse, `Перед повторным запуском: "${lastResponse.title}"`);
+    }
+    return handleSync(pregeneratedContent);
+  }, [handleSync, lastResponse, saveVersionToHistory]);
+
   useEffect(() => {
     if (credentials.baseUrl && (credentials.tokenId || credentials.tokenId === 'SERVER_MANAGED')) {
       loadBooks();
@@ -515,12 +561,13 @@ root_cause_category: "[Category]"
 
   return (
     <div 
-      className="min-h-screen bg-editorial-bg text-editorial-text font-sans selection:bg-editorial-text selection:text-white pb-12"
+      className="min-h-screen bg-editorial-bg text-editorial-text font-sans selection:bg-editorial-text selection:text-white"
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
-      <AppHeader 
+      <div className="no-print pb-12">
+        <AppHeader 
         credentials={credentials}
         isChatOpen={isChatOpen}
         setIsChatOpen={setIsChatOpen}
@@ -601,7 +648,7 @@ root_cause_category: "[Category]"
             isLoadingBooks={isLoadingBooks}
             isLoadingChapters={isLoadingChapters}
             isLoadingPages={isLoadingPages}
-            handleSync={handleSync}
+            handleSync={handleSyncWithHistory}
             loadChaptersAndPages={loadChaptersAndPages}
             loadChapterPages={loadChapterPages}
             executionControl={executionControl}
@@ -636,14 +683,14 @@ root_cause_category: "[Category]"
       )}
 
       {mindmapData && (
-        <MindmapModal mindmapData={mindmapData} setMindmapData={setMindmapData} handleSync={handleSync} />
+        <MindmapModal mindmapData={mindmapData} setMindmapData={setMindmapData} handleSync={handleSyncWithHistory} />
       )}
 
       {mermaidData && (
         <MermaidModal 
           mermaidData={mermaidData} 
           setMermaidData={setMermaidData} 
-          handleSync={handleSync} 
+          handleSync={handleSyncWithHistory} 
           onInsertToPage={(mermaidMd) => {
             if (lastResponse) {
               setLastResponse({
@@ -686,6 +733,9 @@ root_cause_category: "[Category]"
         setUserInput={setUserInput}
         isSyncing={executionControl.isSyncing}
         handleRefinement={() => {
+          if (lastResponse) {
+            saveVersionToHistory(lastResponse, `До уточнения: "${userInput.slice(0, 20)}${userInput.length > 20 ? '...' : ''}"`);
+          }
           handleRefinement(userInput);
           setUserInput('');
         }}
@@ -693,6 +743,10 @@ root_cause_category: "[Category]"
         sources={sources}
         setSyncStatus={executionControl.setSyncStatus}
         books={books}
+        versionHistory={versionHistory}
+        setVersionHistory={setVersionHistory}
+        saveVersionToHistory={saveVersionToHistory}
+        rollbackToVersion={rollbackToVersion}
       />
       
       <ChatWindow
@@ -700,10 +754,11 @@ root_cause_category: "[Category]"
         onClose={() => setIsChatOpen(false)}
         sources={sources}
         model={geminiModel}
-        onGenerateArticle={handleSync}
+        onGenerateArticle={handleSyncWithHistory}
         onFileUpload={processFiles}
         isUploading={uploadProgress !== null}
       />
+      </div>
     </div>
   );
 }

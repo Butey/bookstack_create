@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { ClipboardList } from 'lucide-react';
 import { WorkspacePanel } from './WorkspacePanel';
 import { ConfigurationModal } from './ConfigurationModal';
@@ -61,6 +62,56 @@ interface SourceEditorPanelProps {
 }
 
 export function SourceEditorPanel(props: SourceEditorPanelProps) {
+  const [ticketId, setTicketId] = useState('');
+
+  const handleLoadTicket = (e?: React.FormEvent) => {
+    if (e) {
+      e.preventDefault();
+    }
+    const cleanId = ticketId.trim();
+    if (!cleanId) return;
+
+    if (!props.omnideskCreds.domain || !props.omnideskCreds.email || !props.omnideskCreds.apiKey) {
+      alert('Сначала укажите настройки Omnidesk в Конфигурации агента');
+      return;
+    }
+
+    props.executionControl.setIsSyncing(true);
+    props.executionControl.setSyncStatus({ type: 'idle', message: 'Загрузка тикета...' });
+
+    fetch('/api/omnidesk/ticket', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...props.omnideskCreds, ticketId: cleanId })
+    })
+      .then(r => r.json())
+      .then(async data => {
+        if (data.error) throw new Error(data.error);
+        props.setSources((prev: any) => [...prev, { name: data.name, content: data.content, attachments: data.attachments || [] }]);
+        
+        try {
+          await indexVectorDocument(`ticket:${cleanId}`, data.content, {
+            name: data.name,
+            type: 'ticket'
+          });
+        } catch (err) {
+          console.error('Failed to index ticket to vector DB', err);
+        }
+
+        props.executionControl.setSyncStatus({ type: 'success', message: `Тикет ${cleanId} успешно загружен и проиндексирован` });
+        setTicketId('');
+      })
+      .catch(err => {
+        props.executionControl.setSyncStatus({ type: 'error', message: err.message });
+      })
+      .finally(() => {
+        props.executionControl.setIsSyncing(false);
+        setTimeout(() => {
+          props.executionControl.setSyncStatus({ type: 'idle', message: '' });
+        }, 5000);
+      });
+  };
+
   return (
     <div className="lg:col-span-8 flex flex-col gap-8">
       <ConfigurationModal
@@ -108,60 +159,27 @@ export function SourceEditorPanel(props: SourceEditorPanelProps) {
           setPdfExtractionMode={props.setPdfExtractionMode}
         />
 
-        <div className="flex bg-white border-2 border-editorial-text shadow-[4px_4px_0px_0px_rgba(26,26,26,1)] h-12 overflow-hidden">
+        <form 
+          onSubmit={handleLoadTicket}
+          className="flex bg-white border-2 border-editorial-text shadow-[4px_4px_0px_0px_rgba(26,26,26,1)] h-12 overflow-hidden"
+        >
           <div className="flex-1 flex items-center px-4 border-r-2 border-editorial-text bg-[#F5F5F3]">
             <span className="text-[10px] font-bold uppercase tracking-widest text-[#8E8E8A] mr-2 shrink-0">Omnidesk</span>
             <input
               type="text"
               placeholder="ID тикета (напр. 123456)"
               className="w-full bg-transparent outline-none text-sm font-mono placeholder:font-sans"
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  const target = e.target as HTMLInputElement;
-                  if (target.value.trim()) {
-                    const ticketId = target.value.trim();
-                    if (!props.omnideskCreds.domain || !props.omnideskCreds.email || !props.omnideskCreds.apiKey) {
-                      alert('Сначала укажите настройки Omnidesk в Конфигурации агента');
-                      return;
-                    }
-                    props.executionControl.setIsSyncing(true);
-                    props.executionControl.setSyncStatus({ type: 'idle', message: 'Загрузка тикета...' });
-                    fetch('/api/omnidesk/ticket', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ ...props.omnideskCreds, ticketId })
-                    }).then(r => r.json()).then(async data => {
-                      if (data.error) throw new Error(data.error);
-                      props.setSources((prev: any) => [...prev, { name: data.name, content: data.content, attachments: data.attachments || [] }]);
-                      
-                      try {
-                        await indexVectorDocument(`ticket:${ticketId}`, data.content, {
-                          name: data.name,
-                          type: 'ticket'
-                        });
-                      } catch (err) {
-                        console.error('Failed to index ticket to vector DB', err);
-                      }
-
-                      props.executionControl.setSyncStatus({ type: 'success', message: `Тикет ${ticketId} успешно загружен и проиндексирован` });
-                      target.value = '';
-                    }).catch(err => {
-                      props.executionControl.setSyncStatus({ type: 'error', message: err.message });
-                    }).finally(() => {
-                      props.executionControl.setIsSyncing(false);
-                      setTimeout(() => {
-                          props.executionControl.setSyncStatus({ type: 'idle', message: '' });
-                      }, 5000);
-                    });
-                  }
-                }
-              }}
+              value={ticketId}
+              onChange={(e) => setTicketId(e.target.value)}
             />
           </div>
-          <div className="flex items-center px-4 bg-editorial-text text-white text-[10px] font-bold uppercase tracking-widest shrink-0">
+          <button 
+            type="submit"
+            className="flex items-center px-4 bg-editorial-text text-white text-[10px] font-bold uppercase tracking-widest shrink-0 cursor-pointer hover:bg-black transition-colors"
+          >
             Enter для загрузки
-          </div>
-        </div>
+          </button>
+        </form>
 
         <AgentSkillsPanel
           activeSkills={props.activeSkills}

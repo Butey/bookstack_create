@@ -1,10 +1,6 @@
 import { Request, Response } from 'express';
-import { createRequire } from 'module';
 import path from 'path';
 import { MarkItDown } from 'markitdown';
-
-const require = createRequire(import.meta.url);
-const pdf = require('pdf-parse');
 import { SettingsService } from '../services/SettingsService';
 import { GeminiService } from '../services/GeminiService';
 import { BookStackService } from '../services/BookStackService';
@@ -151,23 +147,7 @@ export class ApiController {
         let metadata = {};
         if (file.mimetype === 'application/pdf') {
           try {
-            const data = await pdf(file.buffer);
-            if (data.info) {
-               let creationDate = data.info.CreationDate || '';
-              // Format D:20240212153022Z+03'00' -> 12.02.2024
-              if (creationDate.startsWith('D:')) {
-                const match = creationDate.match(/^D:(\d{4})(\d{2})(\d{2})/);
-                if (match) {
-                  creationDate = `${match[3]}.${match[2]}.${match[1]}`;
-                }
-              }
-              
-              metadata = {
-                title: data.info.Title || '',
-                author: data.info.Author || '',
-                creationDate: creationDate
-              };
-            }
+            metadata = this.extractPdfMetadata(file.buffer);
           } catch (pdfError) {
             console.warn('Failed to extract PDF metadata:', pdfError);
           }
@@ -382,4 +362,46 @@ export class ApiController {
       return res.status(500).json({ error: e.message });
     }
   };
+
+  private extractPdfMetadata(buffer: Buffer): any {
+    const text = buffer.toString('binary');
+    const metadata: any = {
+      title: '',
+      author: '',
+      creationDate: ''
+    };
+    
+    const titleMatch = text.match(/\/Title\s*\(([^)]+)\)/);
+    if (titleMatch) {
+      metadata.title = this.cleanPdfString(titleMatch[1]);
+    }
+    
+    const authorMatch = text.match(/\/Author\s*\(([^)]+)\)/);
+    if (authorMatch) {
+      metadata.author = this.cleanPdfString(authorMatch[1]);
+    }
+    
+    const dateMatch = text.match(/\/CreationDate\s*\(([^)]+)\)/);
+    if (dateMatch) {
+      let dateStr = this.cleanPdfString(dateMatch[1]);
+      if (dateStr.startsWith('D:')) {
+        const match = dateStr.match(/^D:(\d{4})(\d{2})(\d{2})/);
+        if (match) {
+          dateStr = `${match[3]}.${match[2]}.${match[1]}`;
+        }
+      }
+      metadata.creationDate = dateStr;
+    }
+    
+    return metadata;
+  }
+
+  private cleanPdfString(str: string): string {
+    let cleaned = str.replace(/\\([\s\S])/g, '$1');
+    cleaned = cleaned.replace(/\0/g, '');
+    if (cleaned.startsWith('\xfe\xff') || cleaned.startsWith('\xff\xfe')) {
+      cleaned = cleaned.slice(2).replace(/[^\x20-\x7E\xA0-\xFF]/g, '');
+    }
+    return cleaned.trim();
+  }
 }

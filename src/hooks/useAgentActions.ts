@@ -316,10 +316,7 @@ export function useAgentActions(params: {
       return;
     }
 
-    if (targetMode === 'update' && !selectedPageId) {
-      executionControl.setSyncStatus({ type: 'error', message: 'Выберите существующую статью для обновления.' });
-      return;
-    }
+
     if (sources.length === 0 && !content.trim()) {
       executionControl.setSyncStatus({ type: 'error', message: 'Предоставьте хотя бы один источник или текст.' });
       return;
@@ -349,7 +346,7 @@ export function useAgentActions(params: {
       let detectedBookId: number | null = null;
       let analysis: any = null;
 
-      if (targetMode === 'create') {
+      if (!selectedPageId) {
         executionControl.setSyncProgress({ step: 1, total: 4, label: 'Запуск Agentic RAG...' });
         
         analysis = await agenticRagWorkflow(
@@ -386,21 +383,57 @@ export function useAgentActions(params: {
         }
 
         if (analysis.decision === 'create') {
-           detectedBookId = analysis.targetBookId;
-           
-           // If we found context but no duplicate, mark sources as having context
-           if (analysis.retrievedContext && analysis.retrievedContext.length > 0) {
-             params.setSources((prev: Source[]) => prev.map(s => {
-               if (s.selected === false) return s;
-               return {
-                  ...s,
-                  isContext: true
-               };
-             }));
-           }
+          if (targetMode === 'update') {
+            if (analysis.relatedPages && analysis.relatedPages.length > 0) {
+              const matchedPage = analysis.relatedPages[0];
+              analysis.decision = 'update';
+              analysis.targetPageId = matchedPage.id;
+              analysis.targetPageName = matchedPage.name;
+              analysis.targetBookId = matchedPage.book_id;
+              
+              params.setSources((prev: Source[]) => prev.map(s => {
+                if (s.selected === false) return s;
+                return {
+                   ...s,
+                   isDuplicate: true,
+                   duplicateReference: matchedPage.name || 'Существующая статья'
+                };
+              }));
 
-           executionControl.setSyncProgress({ step: 2, total: 4, label: 'Генерация новой статьи' });
-           executionControl.setSyncStatus({ type: 'success', message: 'Существующих дублей нет (найдено ' + (analysis.retrievedContext?.length || 0) + ' контекстных статей). Начинаем написание статьи...' });
+              setRagConfirmation({
+                pageName: matchedPage.name,
+                pageId: matchedPage.id,
+                bookId: matchedPage.book_id || selectedBookId,
+                allSourcesText,
+                allAttachments,
+                analysis
+              });
+              executionControl.setIsSyncing(false);
+              executionControl.setSyncStatus({ type: 'idle', message: 'Точного дубликата не найдено, предлагается обновить похожую статью.' });
+              return;
+            } else {
+              currentTargetMode = 'create';
+              executionControl.setSyncStatus({ type: 'idle', message: 'Статьи для обновления не найдены в BookStack. Переключение в режим создания.' });
+            }
+          }
+
+          if (currentTargetMode === 'create') {
+            detectedBookId = analysis.targetBookId;
+            
+            // If we found context but no duplicate, mark sources as having context
+            if (analysis.retrievedContext && analysis.retrievedContext.length > 0) {
+              params.setSources((prev: Source[]) => prev.map(s => {
+                if (s.selected === false) return s;
+                return {
+                   ...s,
+                   isContext: true
+                };
+              }));
+            }
+
+            executionControl.setSyncProgress({ step: 2, total: 4, label: 'Генерация новой статьи' });
+            executionControl.setSyncStatus({ type: 'success', message: 'Существующих дублей нет (найдено ' + (analysis.retrievedContext?.length || 0) + ' контекстных статей). Начинаем написание статьи...' });
+          }
         }
       }
 

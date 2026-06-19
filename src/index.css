@@ -52,3 +52,147 @@
   scrollbar-width: thin;
   scrollbar-color: #1A1A1A transparent;
 }
+
+/* Printing styles for PDF export */
+@media print {
+  body, #root {
+    background: white !important;
+    color: black !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  #print-section-root {
+    display: block !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 2cm !important;
+    background: white !important;
+    color: black !important;
+  }
+
+  /* Core typography overrides for printed content */
+  .printed-title {
+    font-family: "Playfair Display", Georgia, serif !important;
+    font-size: 26pt !important;
+    font-weight: bold !important;
+    line-height: 1.2 !important;
+    margin-bottom: 12pt !important;
+    color: #000000 !important;
+  }
+
+  .printed-desc {
+    font-family: "Inter", sans-serif !important;
+    font-size: 11pt !important;
+    line-height: 1.5 !important;
+    color: #444444 !important;
+    margin-bottom: 24pt !important;
+    font-style: italic !important;
+    border-left: 3px solid #666666 !important;
+    padding-left: 12pt !important;
+  }
+
+  .printed-markdown {
+    font-family: "Inter", sans-serif !important;
+    font-size: 10.5pt !important;
+    line-height: 1.6 !important;
+    color: #111111 !important;
+  }
+
+  .printed-markdown h1 {
+    font-family: "Playfair Display", Georgia, serif !important;
+    font-size: 20pt !important;
+    font-weight: bold !important;
+    margin-top: 24pt !important;
+    margin-bottom: 12pt !important;
+    color: #000000 !important;
+    page-break-after: avoid;
+  }
+
+  .printed-markdown h2 {
+    font-family: "Playfair Display", Georgia, serif !important;
+    font-size: 16pt !important;
+    font-weight: bold !important;
+    margin-top: 20pt !important;
+    margin-bottom: 10pt !important;
+    color: #000000 !important;
+    border-bottom: 1px solid #cccccc !important;
+    padding-bottom: 3pt !important;
+    page-break-after: avoid;
+  }
+
+  .printed-markdown h3 {
+    font-family: "Inter", sans-serif !important;
+    font-size: 12pt !important;
+    font-weight: bold !important;
+    margin-top: 16pt !important;
+    margin-bottom: 8pt !important;
+    color: #000000 !important;
+    page-break-after: avoid;
+  }
+
+  .printed-markdown p {
+    margin-bottom: 12pt !important;
+  }
+
+  .printed-markdown blockquote {
+    border-left: 4px solid #666666 !important;
+    padding-left: 12pt !important;
+    margin-left: 0 !important;
+    font-style: italic !important;
+    color: #333333 !important;
+    margin-bottom: 12pt !important;
+  }
+
+  .printed-markdown table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    margin-bottom: 16pt !important;
+    page-break-inside: avoid;
+  }
+
+  .printed-markdown th, .printed-markdown td {
+    border: 1px solid #dddddd !important;
+    padding: 6pt 8pt !important;
+    text-align: left !important;
+  }
+
+  .printed-markdown th {
+    background-color: #f5f5f5 !important;
+    font-weight: bold !important;
+  }
+
+  .printed-markdown pre, .printed-markdown code {
+    font-family: "JetBrains Mono", monospace !important;
+    background-color: #f8f8f8 !important;
+    border: 1px solid #eaeaea !important;
+    border-radius: 3px !important;
+    font-size: 9pt !important;
+  }
+
+  .printed-markdown code {
+    padding: 2px 4px !important;
+  }
+
+  .printed-markdown pre {
+    padding: 8pt !important;
+    overflow: auto !important;
+    white-space: pre-wrap !important;
+    word-wrap: break-word !important;
+    margin-bottom: 12pt !important;
+  }
+
+  .printed-markdown ul, .printed-markdown ol {
+    margin-left: 20pt !important;
+    margin-bottom: 12pt !important;
+  }
+
+  .printed-markdown li {
+    margin-bottom: 4pt !important;
+  }
+}
+

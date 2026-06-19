@@ -184,20 +184,45 @@ export function KnowledgeSyncPanel({
           <div className="relative pt-6">
             <div className="absolute -top-3 left-0 bg-white pr-2 text-[10px] font-bold uppercase tracking-widest">Автоматизация</div>
             <button 
-              onClick={() => handleSync()}
-              disabled={executionControl.isSyncing || (targetMode === 'update' && !selectedBookId) || (sourcesLength === 0 && contentLength === 0)}
-              className="w-full py-6 bg-editorial-text disabled:bg-gray-200 disabled:text-gray-400 text-white text-sm uppercase tracking-widest font-bold shadow-xl active:scale-95 transition-all flex items-center justify-center gap-3"
+              onClick={() => {
+                if (!executionControl.isSyncing && (sourcesLength > 0 || contentLength > 0)) {
+                  handleSync();
+                }
+              }}
+              disabled={!executionControl.isSyncing && sourcesLength === 0 && contentLength === 0}
+              className={`w-full text-white text-sm uppercase tracking-widest font-bold shadow-xl active:scale-95 transition-all flex items-center justify-center ${
+                executionControl.isSyncing 
+                  ? 'bg-editorial-text py-4 cursor-wait' 
+                  : 'bg-editorial-text py-6 disabled:bg-gray-200 disabled:text-gray-400 hover:bg-black cursor-pointer'
+              }`}
             >
               {executionControl.isSyncing ? (
-                <>
-                  <Loader2 size={20} className="animate-spin" />
-                  Синхронизация...
-                </>
+                <div className="flex flex-col items-center gap-2.5 w-full px-5">
+                  <div className="flex items-center gap-2">
+                    <Loader2 size={16} className="animate-spin" />
+                    <span className="text-xs uppercase tracking-widest font-bold text-white">
+                      Синхронизация ({executionControl.syncProgress.total ? Math.round((executionControl.syncProgress.step / executionControl.syncProgress.total) * 100) : 0}%)
+                    </span>
+                  </div>
+                  {/* Miniature progress bar inside the button */}
+                  <div className="w-full h-1.5 bg-white/20 border border-white/10 rounded-full overflow-hidden">
+                    <motion.div 
+                      initial={{ width: 0 }}
+                      animate={{ width: `${executionControl.syncProgress.total ? (executionControl.syncProgress.step / executionControl.syncProgress.total) * 100 : 0}%` }}
+                      className="h-full bg-white transition-all duration-300"
+                    />
+                  </div>
+                  {executionControl.syncProgress.label && (
+                    <span className="text-[9px] font-medium tracking-wider text-white/70 text-center uppercase truncate w-full">
+                      {executionControl.syncProgress.label}
+                    </span>
+                  )}
+                </div>
               ) : (
-                <>
+                <div className="flex items-center justify-center gap-3">
                   <Send size={20} />
                   Запустить агент
-                </>
+                </div>
               )}
             </button>
           </div>
