@@ -86,8 +86,36 @@ function generateTableOfContents(markdown: string): string {
 
 export class GeminiService {
   public async generateContent(apiKey: string, model: string, contents: any, config?: any, retries = 6): Promise<{ text: string, modelUsed: string }> {
-    const ai = new GoogleGenAI({ apiKey });
-    let currentModel = model;
+    const ai = new GoogleGenAI({ 
+      apiKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build'
+        }
+      }
+    });
+    
+    let currentModel = model?.trim();
+    
+    // Model alias mapping
+    if (currentModel === 'gemini flash') {
+      currentModel = 'gemini-flash-latest';
+    } else if (currentModel === 'gemini lite' || currentModel === 'flash lite' || currentModel === 'gemini-3.1-flash-lite-preview') {
+      currentModel = 'gemini-3.1-flash-lite';
+    } else if (currentModel === 'gemini pro' || currentModel === 'gemini-3.1-pro') {
+      currentModel = 'gemini-3.1-pro-preview';
+    }
+
+    // Thinking Mode Orchestration for gemini-3.1-pro-preview
+    let finalConfig = config ? { ...config } : {};
+    if (currentModel === 'gemini-3.1-pro-preview') {
+      finalConfig.thinkingConfig = {
+        thinkingLevel: 'HIGH'
+      };
+      if ('maxOutputTokens' in finalConfig) {
+        delete finalConfig.maxOutputTokens;
+      }
+    }
     
     // Stable models to try if the current one hits quota within requested list
     const fallbacks = ['gemini-3.1-flash-lite', 'gemini-3-flash-preview', 'gemini-3.5-flash'];
@@ -99,7 +127,7 @@ export class GeminiService {
           setTimeout(() => reject(new Error('REQUEST_TIMEOUT: Response took too long')), 120000)
         );
         
-        const genPromise = ai.models.generateContent({ model: currentModel, contents, config });
+        const genPromise = ai.models.generateContent({ model: currentModel, contents, config: finalConfig });
         const result = (await Promise.race([genPromise, timeoutPromise])) as any;
         
         return { text: result.text || '', modelUsed: currentModel };
@@ -110,6 +138,25 @@ export class GeminiService {
         try {
           if (error && typeof error === 'object') {
             errStr = error.message || String(error);
+            
+            // Try parsing errStr if it is JSON to extract status and real message
+            try {
+              if (errStr.trim().startsWith('{')) {
+                const parsed = JSON.parse(errStr);
+                if (parsed.error) {
+                  if (parsed.error.code && !statusCode) {
+                    statusCode = parsed.error.code;
+                  }
+                  if (parsed.error.message) {
+                    errStr = parsed.error.message;
+                  }
+                  if (parsed.error.status) {
+                    errStr += ` (${parsed.error.status})`;
+                  }
+                }
+              }
+            } catch (_) {}
+
             if (statusCode) errStr += ` (StatusCode: ${statusCode})`;
             
             // Look for details in SDK error structure
@@ -142,8 +189,8 @@ export class GeminiService {
             }
           }
 
-          // Automatically switch model if quota exceeded or if we hit a service overload and it is not the first attempt
-          const shouldSwitchModel = isQuotaError || (isOverloadError && attempt >= 1);
+          // Automatically switch model if quota exceeded or if we hit a service overload immediately on first rate-limit/overload
+          const shouldSwitchModel = isQuotaError || isOverloadError;
           if (shouldSwitchModel) {
              console.warn(`[GeminiService] Quota hit or service overload for ${currentModel}.`);
              
@@ -176,6 +223,10 @@ export class GeminiService {
         }
 
         // Final error formatting
+        if (errStr.includes('API_KEY_INVALID') || errStr.includes('API Key not found') || errStr.includes('API key not found') || statusCode === 400 && errStr.includes('key')) {
+          throw new Error('[API_KEY_INVALID] Указан неверный или неработающий API-ключ Gemini. Пожалуйста, введите корректный API-ключ в настройках во вкладке \'Администрирование\' / \'Настройки ключей ИИ\' или проверьте переменную окружения GEMINI_API_KEY на сервере.');
+        }
+
         if (isQuotaError) {
           throw new Error(`[QUOTA_EXCEEDED] Превышена квота для модели ${currentModel}. Попробуйте позже или используйте Gemini 1.5 Flash.`);
         }

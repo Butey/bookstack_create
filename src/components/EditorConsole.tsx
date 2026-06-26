@@ -78,6 +78,7 @@ export const EditorConsole = React.memo(function EditorConsole({
   rollbackToVersion
 }: EditorConsoleProps) {
   const [diffMode, setDiffMode] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
   
   const handleDownloadMarkdown = () => {
     if (!lastResponse || !lastResponse.markdown) return;
@@ -111,7 +112,247 @@ export const EditorConsole = React.memo(function EditorConsole({
   };
 
   const handleDownloadPDF = () => {
-    window.print();
+    if (!lastResponse || !lastResponse.markdown) return;
+
+    // Create a temporary hidden iframe for printing to avoid console UI or iframe sandbox/blocked restrictions
+    const iframe = document.createElement('iframe');
+    iframe.style.position = 'fixed';
+    iframe.style.right = '0';
+    iframe.style.bottom = '0';
+    iframe.style.width = '0';
+    iframe.style.height = '0';
+    iframe.style.border = '0';
+    document.body.appendChild(iframe);
+
+    const iframeDoc = iframe.contentWindow?.document || iframe.contentDocument;
+    if (!iframeDoc) {
+      // Direct print fallback if iframe is completely blocked
+      window.print();
+      return;
+    }
+
+    // Build print-optimized structured HTML content with beautiful modern typography and layout
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>${lastResponse.title || 'Статья'}</title>
+          <meta charset="utf-8">
+          <style>
+            @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,700;1,400&display=swap');
+            body {
+              font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+              color: #1a1a1a;
+              line-height: 1.6;
+              padding: 40px;
+              max-width: 800px;
+              margin: 0 auto;
+            }
+            h1 {
+              font-family: 'Playfair Display', Georgia, serif;
+              font-size: 28px;
+              font-weight: 700;
+              margin-bottom: 10px;
+              color: #111111;
+              border-bottom: 2px solid #1a1a1a;
+              padding-bottom: 15px;
+            }
+            .description {
+              font-family: 'Playfair Display', Georgia, serif;
+              font-style: italic;
+              font-size: 15px;
+              color: #4b5563;
+              background-color: #f9f9f7;
+              border-left: 3px solid #1a1a1a;
+              padding: 12px 20px;
+              margin-bottom: 30px;
+              white-space: pre-wrap;
+            }
+            .meta {
+              font-size: 10px;
+              text-transform: uppercase;
+              letter-spacing: 0.12em;
+              color: #6b7280;
+              margin-bottom: 30px;
+              font-weight: 600;
+              border-bottom: 1px dashed #e5e7eb;
+              padding-bottom: 10px;
+            }
+            .markdown {
+              font-size: 14px;
+            }
+            .markdown h1 {
+              font-family: 'Playfair Display', Georgia, serif;
+              font-size: 24px;
+              margin-top: 30px;
+              margin-bottom: 15px;
+              border-bottom: 1px solid #1a1a1a;
+              padding-bottom: 5px;
+            }
+            .markdown h2 {
+              font-family: 'Playfair Display', Georgia, serif;
+              font-size: 20px;
+              margin-top: 30px;
+              margin-bottom: 15px;
+              border-bottom: 1px solid #e5e7eb;
+              padding-bottom: 8px;
+            }
+            .markdown h3 {
+              font-size: 16px;
+              margin-top: 25px;
+              margin-bottom: 10px;
+              font-weight: 600;
+            }
+            .markdown p {
+              margin-bottom: 16px;
+              text-align: justify;
+            }
+            .markdown ul, .markdown ol {
+              margin-bottom: 16px;
+              padding-left: 20px;
+            }
+            .markdown li {
+              margin-bottom: 6px;
+            }
+            .markdown code {
+              background-color: #f3f4f6;
+              padding: 2px 4px;
+              border-radius: 4px;
+              font-family: monospace;
+              font-size: 12px;
+            }
+            .markdown pre {
+              background-color: #1f2937;
+              color: #f9fafb;
+              padding: 15px;
+              border-radius: 6px;
+              overflow-x: auto;
+              margin-bottom: 16px;
+            }
+            .markdown pre code {
+              background-color: transparent;
+              color: inherit;
+              padding: 0;
+            }
+            .markdown blockquote {
+              border-left: 4px solid #d1d5db;
+              padding-left: 15px;
+              color: #4b5563;
+              font-style: italic;
+              margin-bottom: 16px;
+            }
+            .markdown table {
+              width: 100%;
+              border-collapse: collapse;
+              margin-bottom: 20px;
+            }
+            .markdown th, .markdown td {
+              border: 1px solid #e5e7eb;
+              padding: 8px 12px;
+              text-align: left;
+            }
+            .markdown th {
+              background-color: #f9fafb;
+              font-weight: 600;
+            }
+            @media print {
+              body {
+                padding: 0;
+                font-size: 12pt;
+              }
+              h1 {
+                font-size: 24pt;
+              }
+              .description {
+                font-size: 12pt;
+              }
+              .markdown h1 {
+                font-size: 18pt;
+                page-break-after: avoid;
+              }
+              .markdown h2 {
+                font-size: 16pt;
+                page-break-after: avoid;
+              }
+              .markdown h3 {
+                font-size: 14pt;
+                page-break-after: avoid;
+              }
+              .markdown pre, .markdown blockquote, .markdown table {
+                page-break-inside: avoid;
+              }
+            }
+          </style>
+        </head>
+        <body>
+          <h1>${lastResponse.title || 'Без названия'}</h1>
+          ${lastResponse.description ? `<div class="description">${lastResponse.description}</div>` : ''}
+          ${(lastResponse.tags && lastResponse.tags.length > 0) ? `<div class="meta">Метки: ${lastResponse.tags.join(', ')}</div>` : ''}
+          <div class="markdown" id="rendered-content"></div>
+          <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+          <script>
+            window.onload = function() {
+              var content = \`${lastResponse.markdown.replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\$/g, '\\$')}\`;
+              
+              function fallbackHtml(md) {
+                if (!md) return '';
+                var html = md
+                  .replace(/&/g, '&amp;')
+                  .replace(/</g, '&lt;')
+                  .replace(/>/g, '&gt;');
+                html = html.replace(/^#\\s+(.*?)$/gm, '<h1>$1</h1>');
+                html = html.replace(/^##\\s+(.*?)$/gm, '<h2>$1</h2>');
+                html = html.replace(/^###\\s+(.*?)$/gm, '<h3>$1</h3>');
+                html = html.replace(/^####\\s+(.*?)$/gm, '<h4>$1</h4>');
+                html = html.replace(/^---\$/gm, '<hr>');
+                html = html.replace(/\\*\\*(.*?)\\*\\*/g, '<strong>$1</strong>');
+                html = html.replace(/__(.*?)__/g, '<strong>$1</strong>');
+                html = html.replace(/\\*(.*?)\\*/g, '<em>$1</em>');
+                html = html.replace(/_(.*?)_/g, '<em>$1</em>');
+                html = html.replace(/\`\`\`(\\w*)\\n([\\s\\S]*?)\`\`\`/g, '<pre><code class="language-\$1">\$2</code></pre>');
+                html = html.replace(/\`(.*?)\`/g, '<code>$1</code>');
+                html = html.replace(/^&gt;\\s+(.*?)$/gm, '<blockquote>$1</blockquote>');
+                html = html.replace(/^[\\*\\-]\\s+(.*?)$/gm, '<li>$1</li>');
+                html = html.replace(/^\\d+\\.\\s+(.*?)$/gm, '<li>$1</li>');
+                html = html.replace(/(<li>.*?<\\/li>)/gs, '<ul>\$1</ul>');
+                var paragraphs = html.split(/\\n{2,}/);
+                for (var i = 0; i < paragraphs.length; i++) {
+                  var p = paragraphs[i].trim();
+                  if (p && !p.startsWith('<h') && !p.startsWith('<p') && !p.startsWith('<ul') && !p.startsWith('<ol') && !p.startsWith('<li') && !p.startsWith('<pre') && !p.startsWith('<block') && !p.startsWith('<hr') && !p.startsWith('<table') && !p.startsWith('</tbody')) {
+                    paragraphs[i] = '<p>' + p + '</p>';
+                  }
+                }
+                return paragraphs.join('\\n\\n').replace(/(?<!<\\/li>)\\n(?!<li)/g, '<br/>');
+              }
+
+              try {
+                if (typeof marked !== 'undefined') {
+                  document.getElementById('rendered-content').innerHTML = marked.parse(content);
+                } else {
+                  document.getElementById('rendered-content').innerHTML = fallbackHtml(content);
+                }
+              } catch (e) {
+                document.getElementById('rendered-content').innerHTML = fallbackHtml(content);
+              }
+
+              setTimeout(function() {
+                window.focus();
+                window.print();
+              }, 250);
+            };
+          </script>
+        </body>
+      </html>
+    `;
+
+    iframeDoc.open();
+    iframeDoc.write(htmlContent);
+    iframeDoc.close();
+
+    // Clean up temporary iframe
+    setTimeout(() => {
+      document.body.removeChild(iframe);
+    }, 10000);
   };
   
   return (
@@ -239,9 +480,47 @@ export const EditorConsole = React.memo(function EditorConsole({
                   {lastResponse.markdown && (
                     <section>
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
-                        <div className="flex items-center gap-2">
-                          <FileText size={16} className="text-editorial-text" />
-                          <h3 className="text-[11px] font-bold uppercase tracking-[0.2em] text-editorial-text">Черновик статьи</h3>
+                        <div className="flex flex-col gap-1">
+                          <div className="flex items-center gap-2">
+                            <FileText size={16} className="text-editorial-text" />
+                            <h3 className="text-[11px] font-bold uppercase tracking-[0.2em] text-editorial-text">Черновик статьи</h3>
+                          </div>
+                          {syncStatus.type === 'success' && syncStatus.url && (
+                            <div className="flex items-center gap-2 mt-1 flex-wrap">
+                              <a 
+                                href={syncStatus.url} 
+                                target="_blank" 
+                                rel="noopener noreferrer" 
+                                className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-green-50 text-green-700 border border-green-200 text-[10px] font-bold uppercase hover:bg-green-100 transition-colors"
+                              >
+                                <span>Ссылка на статью в Wiki 🔗</span>
+                              </a>
+                              <button 
+                                onClick={() => {
+                                  if (syncStatus.url) {
+                                    navigator.clipboard.writeText(syncStatus.url)
+                                      .then(() => {
+                                        setCopiedLink(true);
+                                        setTimeout(() => setCopiedLink(false), 2000);
+                                      })
+                                      .catch(() => {
+                                        const el = document.createElement('textarea');
+                                        el.value = syncStatus.url!;
+                                        document.body.appendChild(el);
+                                        el.select();
+                                        document.execCommand('copy');
+                                        document.body.removeChild(el);
+                                        setCopiedLink(true);
+                                        setTimeout(() => setCopiedLink(false), 2000);
+                                      });
+                                  }
+                                }}
+                                className="px-2.5 py-1 border border-gray-300 bg-white hover:bg-gray-100 text-[9px] uppercase font-bold text-gray-600 cursor-pointer shadow-[1px_1px_0px_0px_rgba(26,26,26,1)] hover:shadow-none transition-all active:scale-95"
+                              >
+                                {copiedLink ? '✓ Ссылка скопирована!' : 'Копировать'}
+                              </button>
+                            </div>
+                          )}
                         </div>
                         <div className="flex items-center gap-2">
                           {lastResponse.targetPublishMode === 'update' && lastResponse.originalMarkdown && (
@@ -642,13 +921,40 @@ export const EditorConsole = React.memo(function EditorConsole({
                 <div className="space-y-4">
                   {syncStatus.type === 'success' && syncStatus.url && (
                     <div className="p-4 bg-green-50 border-2 border-green-500 text-center flex flex-col items-center gap-3">
+                      {/* Unique Bottom Panel Success */}
                        <div className="flex items-center gap-2 text-green-700">
                          <CheckCircle size={16} />
                          <span className="font-bold uppercase tracking-widest text-[11px]">{syncStatus.message}</span>
                        </div>
                        <a href={syncStatus.url} target="_blank" rel="noopener noreferrer" className="py-2 px-6 bg-green-600 text-white font-bold text-[10px] uppercase tracking-widest hover:bg-green-700 transition-colors shadow-[4px_4px_0px_0px_rgba(22,101,52,0.2)] active:shadow-none active:translate-x-[2px] active:translate-y-[2px]">
-                         Открыть опубликованную статью
+                         Открыть статью в Wiki 🔗
                        </a>
+                       <div className="w-full mt-1">
+                         <button 
+                           onClick={() => {
+                             if (syncStatus.url) {
+                               navigator.clipboard.writeText(syncStatus.url)
+                                 .then(() => {
+                                   setCopiedLink(true);
+                                   setTimeout(() => setCopiedLink(false), 2000);
+                                 })
+                                 .catch(() => {
+                                   const el = document.createElement('textarea');
+                                   el.value = syncStatus.url!;
+                                   document.body.appendChild(el);
+                                   el.select();
+                                   document.execCommand('copy');
+                                   document.body.removeChild(el);
+                                   setCopiedLink(true);
+                                   setTimeout(() => setCopiedLink(false), 2000);
+                                 });
+                             }
+                           }}
+                           className="w-full py-2 px-4 bg-white hover:bg-gray-100 text-green-700 border border-green-300 font-bold text-[10px] uppercase tracking-widest transition-colors cursor-pointer shadow-[4px_4px_0px_0px_rgba(22,101,52,0.05)] active:shadow-none active:translate-x-[2px] active:translate-y-[2px] flex items-center justify-center gap-1"
+                         >
+                           {copiedLink ? '✓ Ссылка скопирована!' : 'Копировать ссылку'}
+                         </button>
+                       </div>
                     </div>
                   )}
                   <button 
@@ -659,6 +965,7 @@ export const EditorConsole = React.memo(function EditorConsole({
                   </button>
                 </div>
               )}
+
             </div>
           </motion.div>
         </>

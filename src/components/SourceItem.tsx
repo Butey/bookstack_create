@@ -1,5 +1,5 @@
 import { motion } from 'motion/react';
-import { Eye, X, Book, User, Calendar, AlertCircle, Copy } from 'lucide-react';
+import { Eye, X, Book, User, Calendar, AlertCircle, Copy, Image } from 'lucide-react';
 import { SourceMetadata } from '../types';
 
 interface SourceItemProps {
@@ -16,6 +16,8 @@ interface SourceItemProps {
 }
 
 export function SourceItem({ name, content, selected, metadata, isDuplicate, isContext, duplicateReference, onToggle, onPreview, onDelete }: SourceItemProps) {
+  const isImageFile = name.toLowerCase().match(/\.(png|jpg|jpeg|webp|gif|svg)$/) !== null;
+
   return (
     <motion.div 
       initial={{ opacity: 0, y: 5 }}
@@ -44,11 +46,17 @@ export function SourceItem({ name, content, selected, metadata, isDuplicate, isC
         </div>
         <div className="flex flex-col overflow-hidden">
           <div className="flex items-center gap-2">
+            {isImageFile && <Image size={11} className="text-amber-500 shrink-0" />}
             <span className="text-[10px] font-bold uppercase tracking-widest truncate leading-none">
               {metadata?.title || name}
             </span>
             {selected && !isDuplicate && !isContext && (
               <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" title="Источник активен" />
+            )}
+            {isImageFile && (
+              <div className="flex items-center gap-1 px-1.5 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-[2px] shadow-sm ml-1" title="Изображение проанализировано с помощью Gemini Pro">
+                <span className="text-[7px] font-bold uppercase tracking-wider">Vision</span>
+              </div>
             )}
             {isDuplicate && (
               <div className="flex items-center gap-1 px-1.5 py-0.5 bg-amber-100 text-amber-700 border border-amber-300 rounded-[2px] shadow-sm ml-1" title={duplicateReference ? `Дубликат статьи: ${duplicateReference}` : "Обнаружен дубликат статьи"}>

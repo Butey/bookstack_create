@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { Send, Loader2, CheckCircle, AlertCircle, HelpCircle, Book, Layers, ChevronRight } from 'lucide-react';
 import { BookStackBook, BookStackChapter, BookStackPage } from '../types';
@@ -48,6 +49,8 @@ export function KnowledgeSyncPanel({
   executionControl, sourcesLength, contentLength,
   handleGenerateMindmap, handleGenerateFAQ, handleGenerateMermaid, setIsConfigOpen
 }: KnowledgeSyncPanelProps) {
+  const [copiedLink, setCopiedLink] = useState(false);
+
   const bookName = selectedBookId 
     ? books.find(b => b.id === selectedBookId)?.name 
     : 'Автоматический выбор';
@@ -246,9 +249,40 @@ export function KnowledgeSyncPanel({
                       {executionControl.syncStatus.message.replace('[QUOTA_EXCEEDED]', '').replace('[INVALID_MODEL]', '').trim()}
                     </p>
                     {executionControl.syncStatus.url && (
-                      <a href={executionControl.syncStatus.url} target="_blank" rel="noopener noreferrer" className="text-[11px] font-bold uppercase underline hover:opacity-80">
-                        Открыть статью
-                      </a>
+                      <div className="flex items-center gap-3 mt-1.5 flex-wrap">
+                        <a 
+                          href={executionControl.syncStatus.url} 
+                          target="_blank" 
+                          rel="noopener noreferrer" 
+                          className="px-3 py-1 bg-green-600 hover:bg-green-700 text-white text-[9px] font-bold uppercase tracking-widest transition-colors flex items-center gap-1.5"
+                        >
+                          Открыть статью 🔗
+                        </a>
+                        <button 
+                          onClick={() => {
+                            if (executionControl.syncStatus.url) {
+                              navigator.clipboard.writeText(executionControl.syncStatus.url)
+                                .then(() => {
+                                  setCopiedLink(true);
+                                  setTimeout(() => setCopiedLink(false), 2000);
+                                })
+                                .catch(() => {
+                                  const el = document.createElement('textarea');
+                                  el.value = executionControl.syncStatus.url!;
+                                  document.body.appendChild(el);
+                                  el.select();
+                                  document.execCommand('copy');
+                                  document.body.removeChild(el);
+                                  setCopiedLink(true);
+                                  setTimeout(() => setCopiedLink(false), 2000);
+                                });
+                            }
+                          }}
+                          className="px-3 py-1 bg-white hover:bg-gray-100 text-green-700 border border-green-300 text-[9px] font-bold uppercase tracking-widest transition-colors cursor-pointer"
+                        >
+                          {copiedLink ? '✓ Скопировано!' : 'Копировать ссылку'}
+                        </button>
+                      </div>
                     )}
                     {(executionControl.syncStatus.message.includes('[QUOTA_EXCEEDED]') || executionControl.syncStatus.message.includes('[INVALID_MODEL]')) && (
                       <button

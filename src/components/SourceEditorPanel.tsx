@@ -89,16 +89,33 @@ export function SourceEditorPanel(props: SourceEditorPanelProps) {
         if (data.error) throw new Error(data.error);
         props.setSources((prev: any) => [...prev, { name: data.name, content: data.content, attachments: data.attachments || [] }]);
         
+        let indexErrorText = '';
         try {
           await indexVectorDocument(`ticket:${cleanId}`, data.content, {
             name: data.name,
             type: 'ticket'
           });
-        } catch (err) {
+        } catch (err: any) {
           console.error('Failed to index ticket to vector DB', err);
+          const responseErr = err.response?.data?.error || err.message || '';
+          if (responseErr.includes('API_KEY_INVALID')) {
+            indexErrorText = ' (Ошибка векторизации ИИ: [API_KEY_INVALID] Неработающий API-ключ Gemini. Проверьте настройки администрирования)';
+          } else {
+            indexErrorText = ` (Ошибка векторизации ИИ: ${responseErr})`;
+          }
         }
 
-        props.executionControl.setSyncStatus({ type: 'success', message: `Тикет ${cleanId} успешно загружен и проиндексирован` });
+        if (indexErrorText) {
+          props.executionControl.setSyncStatus({ 
+            type: 'error', 
+            message: `Тикет ${cleanId} загружен с Omnidesk, но не проиндексирован во встроенную базу данных.${indexErrorText}` 
+          });
+        } else {
+          props.executionControl.setSyncStatus({ 
+            type: 'success', 
+            message: `Тикет ${cleanId} успешно загружен и заиндексирован` 
+          });
+        }
         setTicketId('');
       })
       .catch(err => {

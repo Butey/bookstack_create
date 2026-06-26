@@ -1,4 +1,3 @@
-import fs from 'fs';
 import path from 'path';
 import { GoogleGenAI } from '@google/genai';
 
@@ -9,8 +8,6 @@ export interface VectorDocument {
   embedding: number[];
 }
 
-const DB_PATH = path.join(process.cwd(), '.data', 'vector_store.json');
-
 export class VectorStore {
   private sessionDocuments: Record<string, VectorDocument[]> = {};
 
@@ -18,11 +15,11 @@ export class VectorStore {
     // No longer loading from disk for session isolation + "reset on refresh" requirement
   }
 
-  private save() {
-    // No longer saving to disk
-  }
-
   private async getEmbedding(text: string, apiKey: string): Promise<number[]> {
+    if (!apiKey) {
+      console.warn('[VectorStore] API-ключ Gemini не передан. Будет использован нулевой вектор (fallback).');
+      return new Array(768).fill(0);
+    }
     const ai = new GoogleGenAI({ apiKey });
     // Truncate text to avoid token limits. gemini-embedding-2-preview supports a decent amount, but we want to be safe.
     const safeText = text.length > 8000 ? text.substring(0, 8000) : text;
@@ -31,14 +28,18 @@ export class VectorStore {
         model: 'gemini-embedding-2-preview',
         contents: safeText,
       });
-      return response.embeddings?.[0]?.values || [];
+      return response.embeddings?.[0]?.values || new Array(768).fill(0);
     } catch (e: any) {
-      console.error('Embedding failed for text length', text.length, 'Error:', e.message);
-      throw e;
+      console.error('[VectorStore] Embedding generation failed for text length', text.length, 'Error:', e.message || e);
+      // Fallback gracefully instead of throwing to prevent app crash and 500 responses
+      return new Array(768).fill(0);
     }
   }
 
   private cosineSimilarity(vecA: number[], vecB: number[]): number {
+    if (!vecA || !vecB || vecA.length === 0 || vecB.length === 0) return 0;
+    if (vecA.length !== vecB.length) return 0;
+    
     let dotProduct = 0;
     let normA = 0;
     let normB = 0;

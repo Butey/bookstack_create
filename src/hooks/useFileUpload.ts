@@ -95,17 +95,34 @@ export function useFileUpload(
           }]);
 
           // Index the file into vector store
+          let indexErrorText = '';
           try {
             await indexVectorDocument(`file:${Date.now()}_${file.name}`, extractedText, {
               name: file.name,
               type: 'uploaded_file',
               ...metadata
             });
-          } catch (err) {
+          } catch (err: any) {
             console.error('Failed to index file to vector DB', err);
+            const responseErr = err.response?.data?.error || err.message || '';
+            if (responseErr.includes('API_KEY_INVALID')) {
+              indexErrorText = ' (Ошибка векторизации ИИ: [API_KEY_INVALID] Неработающий API-ключ Gemini. Проверьте настройки)';
+            } else {
+              indexErrorText = ` (Ошибка векторизации ИИ: ${responseErr})`;
+            }
           }
 
-          executionControl.setSyncStatus({ type: 'success', message: `${prefix}Источник "${file.name}" добавлен.` });
+          if (indexErrorText) {
+            executionControl.setSyncStatus({ 
+              type: 'error', 
+              message: `${prefix}Источник "${file.name}" добавлен локально, но не проиндексирован ИИ.${indexErrorText}` 
+            });
+          } else {
+            executionControl.setSyncStatus({ 
+              type: 'success', 
+              message: `${prefix}Источник "${file.name}" успешно добавлен и проиндексирован.` 
+            });
+          }
           
           setUploadProgress({ percent: Math.round(basePercent + totalWeightPerFile), label: `${prefix}Завершено` });
         } catch (e: any) {

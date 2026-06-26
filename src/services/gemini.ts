@@ -6,6 +6,7 @@ import { BookStackCredentials } from '../types';
 export const GEMINI_MODELS = [
   { id: 'gemini-3.1-flash-lite',         label: 'Gemini 3.1 Flash-Lite', description: 'Сверхбыстрая и стабильная модель 3-го поколения' },
   { id: 'gemini-3.5-flash',              label: 'Gemini 3.5 Flash', description: 'Новейшая экспериментальная модель' },
+  { id: 'gemini-3.1-pro-preview',        label: 'Gemini 3.1 Pro Preview', description: 'Продвинутая модель для сложных задач с полной поддержкой рассуждений (Thinking)' },
   { id: 'gemini-3.1-flash-live-preview', label: 'Gemini 3.1 Flash Live', description: 'Превью-версия с поддержкой Real-time функций' },
   { id: 'gemini-3-flash-preview',        label: 'Gemini 3 Flash Preview', description: 'Высокая производительность' },
   { id: 'gemini-2.5-pro',                label: 'Gemini 2.5 Pro', description: 'Продвинутая модель для глубокого анализа' },
@@ -21,6 +22,9 @@ export interface CallGeminiConfig {
   systemInstruction?: string;
   signal?: AbortSignal;
   checkPause?: () => Promise<void>;
+  thinkingConfig?: {
+    thinkingLevel: 'HIGH' | 'LOW' | 'MINIMAL';
+  };
 }
 
 export async function callGemini(model: GeminiModelId, contents: any[], config?: CallGeminiConfig): Promise<{ text: string, modelUsed: string }> {
@@ -34,7 +38,8 @@ export async function callGemini(model: GeminiModelId, contents: any[], config?:
       config: { 
         responseMimeType: config?.responseMimeType,
         responseSchema: config?.responseSchema,
-        systemInstruction: config?.systemInstruction
+        systemInstruction: config?.systemInstruction,
+        thinkingConfig: config?.thinkingConfig
       } 
     }, {
       signal: config?.signal,
@@ -251,7 +256,7 @@ export async function extractTextFromFile(
 ) {
   const normMime = (mimeType || '').trim().toLowerCase();
   const safeMimeType = normMime === 'application/octet-stream' ? 'text/plain' : normMime;
-  const parsingModel = 'gemini-3.1-flash-lite';
+  let parsingModel: GeminiModelId = 'gemini-3.1-flash-lite';
 
   let cleanBase64 = base64 || '';
   if (cleanBase64.includes(';base64,')) {
@@ -263,6 +268,21 @@ export async function extractTextFromFile(
     Если это HTML, убери скрипты и стили, верни только контент. 
     Если это PDF, сохрани логическую структуру. 
     Верни ТОЛЬКО извлеченный текст, без своих комментариев.`;
+
+  // --- SKILL: Image analysis and OCR using gemini-3.1-pro-preview ---
+  if (safeMimeType.startsWith('image/')) {
+    parsingModel = 'gemini-3.1-pro-preview';
+    prompt = `Вы — ведущий ИИ-аналитик и эксперт по мультимодальному компьютерному зрению (Computer Vision & High-Precision OCR).
+Перед вами изображение (фотографія, схема или скриншот).
+
+Проведите детальный анализ на русском языке. Ответ должен быть богато и профессионально отформатирован в Markdown.
+Выполните следующие задачи:
+1. **Детальное описание**: Подробно опишите, что представлено на изображении (схема, диаграмма, скриншот системы, интерфейс программы, график, фотография). Каковы ключевые визуальные элементы?
+2. **Распознавание текста (OCR)**: С высокой точностью считайте весь видимый текст. Если на изображении присутствуют таблицы, схемы данных, логи ошибок, код или конфигурации — извлеките их и оформите в виде аккуратных таблиц Markdown или блоков кода с указанием синтаксиса.
+3. **Техническая интерпретация & Выводы**: Дайте глубокую интерпретацию содержимого. Например, если это скриншот ошибки или лога — объясните ее характер и возможные решения; если это схема — опишите архитектуру или рабочий процесс; если это график — проанализируйте тренды.
+
+Верните строго структурированный Markdown-отчет. Избегайте поверхностных суждений.`;
+  }
 
   // --- SKILL: PDF-CONVERSION-ROUTER ---
   if (safeMimeType === 'application/pdf') {
@@ -278,7 +298,7 @@ export async function extractTextFromFile(
 
   try {
     const result = await callGemini(
-      parsingModel as GeminiModelId,
+      parsingModel,
       [{ role: 'user', parts: [{ text: prompt }, { inlineData: { data: cleanBase64, mimeType: safeMimeType } }] }],
       { signal: options?.signal, checkPause: options?.checkPause }
     );

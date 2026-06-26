@@ -755,6 +755,29 @@ root_cause_category: "[Category]"
         sources={sources}
         model={geminiModel}
         onGenerateArticle={handleSyncWithHistory}
+        onRefineArticle={(instruction) => {
+          if (lastResponse) {
+            saveVersionToHistory(lastResponse, `До уточнения в чате: "${instruction.slice(0, 20)}${instruction.length > 20 ? '...' : ''}"`);
+          }
+          handleRefinement(instruction);
+        }}
+        onGenerateMindmap={handleGenerateMindmap}
+        onGenerateFAQ={handleGenerateFAQ}
+        onGenerateMermaid={handleGenerateMermaid}
+        onSelectBook={(bookId) => {
+          setSelectedBookId(bookId);
+          setSelectedChapterId(null);
+        }}
+        onSelectChapter={(chapId) => {
+          setSelectedChapterId(chapId);
+        }}
+        onToggleSource={(name, selected) => {
+          setSources((prev) => prev.map((s) => s.name === name ? { ...s, selected } : s));
+        }}
+        books={books}
+        chapters={chapters}
+        selectedBookId={selectedBookId}
+        selectedChapterId={selectedChapterId}
         onFileUpload={processFiles}
         isUploading={uploadProgress !== null}
       />

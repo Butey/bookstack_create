@@ -89,6 +89,12 @@ export function useAgentActions(params: {
         }
       }
 
+      // Если целевая книга все еще не найдена/не выбрана при создании, но список доступных книг не пуст
+      if (!activeBookId && publishMode === 'create' && books && books.length > 0) {
+        activeBookId = books[0].id;
+        console.log(`[useAgentActions] Автоматический выбор первой доступной книги в качестве запасного варианта: ID ${activeBookId}`);
+      }
+
       if (!activeBookId && publishMode === 'create') {
         if (books.length === 0) {
           throw new Error('Список книг пуст. Пожалуйста, проверьте настройки подключения к Wiki.');
@@ -103,6 +109,7 @@ export function useAgentActions(params: {
       const finalTags = combinedTags.slice(0, 10);
 
       let pageUrl = '';
+      let indexErrorText = '';
 
       if (publishMode === 'create') {
         const createRes = await createPage(
@@ -122,8 +129,14 @@ export function useAgentActions(params: {
               book_id: activeBookId,
               url: pageUrl
             });
-          } catch(err) {
+          } catch(err: any) {
             console.error('Failed to index to vector DB', err);
+            const responseErr = err.response?.data?.error || err.message || '';
+            if (responseErr.includes('API_KEY_INVALID')) {
+              indexErrorText = ' (Ошибка векторизации ИИ: [API_KEY_INVALID] Неработающий API-ключ Gemini. Проверьте настройки)';
+            } else {
+              indexErrorText = ` (Ошибка векторизации ИИ: ${responseErr})`;
+            }
           }
         }
       } else if (publishPageId) {
@@ -142,16 +155,48 @@ export function useAgentActions(params: {
             book_id: activeBookId,
             url: pageUrl
           });
-        } catch(err) {
+        } catch(err: any) {
           console.error('Failed to index to vector DB', err);
+          const responseErr = err.response?.data?.error || err.message || '';
+          if (responseErr.includes('API_KEY_INVALID')) {
+            indexErrorText = ' (Ошибка векторизации ИИ: [API_KEY_INVALID] Неработающий API-ключ Gemini. Проверьте настройки)';
+          } else {
+            indexErrorText = ` (Ошибка векторизации ИИ: ${responseErr})`;
+          }
         }
       }
 
-      executionControl.setSyncStatus({ 
-        type: 'success', 
-        message: publishMode === 'create' ? `Успех! "${processed.title}" добавлена в BookStack.` : `Успех! Статья обновлена.`,
-        url: pageUrl
-      });
+      if (publishMode === 'create') {
+        if (indexErrorText) {
+          executionControl.setSyncStatus({ 
+            type: 'error', 
+            message: `"${processed.title}" добавлена в BookStack, но возникла ошибка при векторизации ИИ.${indexErrorText}`,
+            url: pageUrl
+          });
+        } else {
+          executionControl.setSyncStatus({ 
+            type: 'success', 
+            message: `Успех! "${processed.title}" добавлена в BookStack.`,
+            url: pageUrl
+          });
+        }
+      } else {
+        // update mode or pregenerated mode
+        let finalIndexError = ''; // scoped for update error check locally if anyone else needs details
+        if (indexErrorText) {
+          executionControl.setSyncStatus({ 
+            type: 'error', 
+            message: `Статья обновлена, но возникла ошибка при векторизации ИИ.${indexErrorText}`,
+            url: pageUrl
+          });
+        } else {
+          executionControl.setSyncStatus({ 
+            type: 'success', 
+            message: `Успех! Статья обновлена.`,
+            url: pageUrl
+          });
+        }
+      }
       setContent('');
       setSources([]);
       
