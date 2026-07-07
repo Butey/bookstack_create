@@ -43,6 +43,35 @@ export default defineConfig(({mode}) => {
         '@': path.resolve(__dirname, '.'),
       },
     },
+    build: {
+      sourcemap: false, // Отключаем генерацию sourcemaps для колоссальной экономии памяти во время сборки
+      minify: 'esbuild', // Esbuild работает намного быстрее и потребляет значительно меньше RAM, чем Terser
+      chunkSizeWarningLimit: 1200,
+      rollupOptions: {
+        maxParallelFileOps: 2, // Ограничиваем параллельный ввод-вывод, чтобы избежать всплесков потребления памяти
+        output: {
+          manualChunks(id) {
+            // Дробим сторонние зависимости на меньшие куски. 
+            // Это предотвращает удержание в RAM одного огромного AST-дерева в Rollup.
+            if (id.includes('node_modules')) {
+              if (id.includes('mermaid')) {
+                return 'vendor-mermaid';
+              }
+              if (id.includes('d3') || id.includes('recharts')) {
+                return 'vendor-charts';
+              }
+              if (id.includes('motion')) {
+                return 'vendor-motion';
+              }
+              if (id.includes('react')) {
+                return 'vendor-react';
+              }
+              return 'vendor-core';
+            }
+          }
+        }
+      }
+    },
     server: {
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
       // Do not modify—file watching is disabled to prevent flickering during agent edits.
