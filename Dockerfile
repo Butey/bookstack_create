@@ -2,27 +2,30 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# Ограничиваем использование RAM для Node.js, предотвращая падение и зависание на слабых VPS
+# Ограничиваем использование RAM для Node.js во время сборки
 ENV NODE_OPTIONS="--max-old-space-size=450"
-
-# Устанавливаем только git (необходим для github-зависимостей вроде markitdown)
-# Удаляем тяжелые python3, make, g++, openssh для экономии места на диске (~200MB)
-RUN apk add --no-cache git
 
 COPY package.json package-lock.json* ./
 
-# npm ci с оптимизацией кэша, отключением аудита/фонда и принудительной очисткой кэша для минимизации места на диске
-RUN npm ci --quiet --no-audit --no-fund --preferred-offline && npm cache clean --force
+# Устанавливаем git (необходим для github-зависимости markitdown), запускаем чистую сборку npm ci,
+# удаляем git и принудительно очищаем кэш в один шаг, чтобы не раздувать слои Docker
+RUN apk add --no-cache git && \
+    npm ci --quiet --no-audit --no-fund --preferred-offline && \
+    apk del git && \
+    npm cache clean --force
 
 COPY . .
 RUN npm run build
 
-# Удаляем dev-зависимости и очищаем кэш повторно
+# Удаляем dev-зависимости (включая тяжелые react, vite, mermaid, d3 из production node_modules) и очищаем кэш повторно
 RUN npm prune --omit=dev && npm cache clean --force
 
 FROM node:20-alpine AS runner
 
 WORKDIR /app
+
+# Ограничиваем использование RAM для Node.js в рантайме (150MB достаточно для Express, остальное отдаем системе)
+ENV NODE_OPTIONS="--max-old-space-size=150"
 
 # Устанавливаем окружение
 ENV NODE_ENV=production
