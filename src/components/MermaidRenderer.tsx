@@ -1,13 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-import mermaid from 'mermaid';
-
-// Initialize mermaid
-mermaid.initialize({
-  startOnLoad: false,
-  theme: 'neutral',
-  securityLevel: 'loose',
-  fontFamily: 'Inter, system-ui, sans-serif'
-});
 
 interface MermaidRendererProps {
   code: string;
@@ -28,6 +19,17 @@ export function MermaidRenderer({ code }: MermaidRendererProps) {
       try {
         setError(null);
         const cleanCode = code.trim();
+        
+        // Dynamically load mermaid to prevent heavy static import analysis during Vite build
+        const { default: mermaid } = await import('mermaid');
+        
+        mermaid.initialize({
+          startOnLoad: false,
+          theme: 'neutral',
+          securityLevel: 'loose',
+          fontFamily: 'Inter, system-ui, sans-serif'
+        });
+
         const { svg: renderedSvg } = await mermaid.render(uniqueId, cleanCode);
         if (isMounted) {
           setSvg(renderedSvg);

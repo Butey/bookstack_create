@@ -46,9 +46,11 @@ export default defineConfig(({mode}) => {
     build: {
       sourcemap: false, // Отключаем генерацию sourcemaps для колоссальной экономии памяти во время сборки
       minify: 'esbuild', // Esbuild работает намного быстрее и потребляет значительно меньше RAM, чем Terser
-      chunkSizeWarningLimit: 1200,
+      cssCodeSplit: false, // Отключаем разделение CSS: сборка одного файла требует гораздо меньше RAM/CPU, чем вычисление множества мелких чанков
+      chunkSizeWarningLimit: 2000,
       rollupOptions: {
-        maxParallelFileOps: 2, // Ограничиваем параллельный ввод-вывод, чтобы избежать всплесков потребления памяти
+        maxParallelFileOps: 1, // Строго один файл за раз, чтобы минимизировать нагрузку на CPU/RAM на 1 vCPU серверах
+        cache: false, // Отключаем кэш Rollup, чтобы предотвратить раздувание Node.js Heap-памяти во время сборки
         output: {
           manualChunks(id) {
             // Дробим сторонние зависимости на меньшие куски. 

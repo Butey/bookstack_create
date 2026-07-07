@@ -11,10 +11,37 @@ export class BookStackService {
   private httpsAgent = new https.Agent({ rejectUnauthorized: false });
   private cache = new Map<string, CacheEntry>();
   private readonly CACHE_TTL = 5 * 60 * 1000; // 5 минут кеша
+  private lastPruneTime = Date.now();
+  private readonly PRUNE_INTERVAL = 10 * 60 * 1000; // Очистка каждые 10 минут
 
-  public async proxyRequest(baseUrl: string, tokenId: string, tokenSecret: string, method: Method | string, url: string, data?: any): Promise<{ status: number, data: any }> {
+  /**
+   * Периодическая очистка устаревших записей в кеше во избежание утечек памяти
+   */
+  private pruneExpiredCache(): void {
+    const now = Date.now();
+    if (now - this.lastPruneTime < this.PRUNE_INTERVAL) return;
+
+    for (const [key, entry] of this.cache.entries()) {
+      if (entry.expiry <= now) {
+        this.cache.delete(key);
+      }
+    }
+    this.lastPruneTime = now;
+  }
+
+  public async proxyRequest(
+    baseUrl: string,
+    tokenId: string,
+    tokenSecret: string,
+    method: Method | string,
+    url: string,
+    data?: any
+  ): Promise<{ status: number; data: any }> {
     const isGet = (method as string).toUpperCase() === 'GET';
     const cacheKey = `${baseUrl}|${tokenId}|${url}`;
+
+    // Периодически чистим кеш
+    this.pruneExpiredCache();
 
     if (isGet) {
       const cached = this.cache.get(cacheKey);
@@ -32,10 +59,10 @@ export class BookStackService {
         ...(isGet === false && { 'Content-Type': 'application/json' })
       },
       httpsAgent: this.httpsAgent,
-      timeout: 600000, // Increased to 600 seconds to prevent 500 error on slow/large requests like search or count=200
+      timeout: 30000, // Разумный таймаут 30 сек (вместо 600 сек) для предотвращения зависания сокетов сервера
       ...(data && { data })
     });
-    
+
     if (isGet && response.status === 200) {
       this.cache.set(cacheKey, {
         data: response.data,
@@ -50,7 +77,8 @@ export class BookStackService {
         }
       }
     }
-    
+
     return { status: response.status, data: response.data };
   }
 }
+

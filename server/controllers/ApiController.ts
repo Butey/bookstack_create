@@ -257,7 +257,7 @@ export class ApiController {
       res.status(status).json(responseData);
     } catch (error: any) {
       const status = error.response?.status || 500;
-      let errorData = error.response?.data || { message: error.message };
+      let errorData = error.response?.data || { message: error.message, code: error.code };
 
       if (typeof errorData === 'string' && errorData.toLowerCase().includes('<html')) {
         errorData = { message: 'Received HTML error page from server. Please check if your Base URL is correct.' };
@@ -265,11 +265,24 @@ export class ApiController {
 
       console.error(`[BookStack Error] ${method} ${url} - Status: ${status} - Message:`, errorData.message || errorData.error?.message || 'Unknown error');
       
-      let errorMessage = 'An error occurred with BookStack API. Please check your credentials and Base URL.';
-      if (errorData.error?.message) errorMessage = errorData.error.message;
-      else if (errorData.message) errorMessage = errorData.message;
-      else if (status === 404) errorMessage = 'API endpoint not found. Ensure BookStack version supports API and Base URL is correct.';
-      else if (status === 401) errorMessage = 'Unauthorized. Please check your Token ID and Secret.';
+      let errorMessage = 'Произошла ошибка при обращении к BookStack API. Пожалуйста, проверьте учетные данные и Base URL.';
+      
+      // Точечная диагностика сетевых ошибок
+      if (error.code === 'ECONNREFUSED') {
+        errorMessage = `Подключение отклонено (ECONNREFUSED) по адресу ${baseUrl}. Убедитесь, что сервер BookStack запущен, слушает порт (например, 80 или 443 для SSL) и брандмауэр (firewall) сервера или вашей VPS не блокирует исходящие/входящие запросы.`;
+      } else if (error.code === 'ENOTFOUND') {
+        errorMessage = `DNS-адрес не найден (ENOTFOUND). Убедитесь, что доменное имя в Base URL (${baseUrl}) указано правильно и зарегистрировано в DNS.`;
+      } else if (error.code === 'ETIMEDOUT' || error.code === 'TIMEOUT' || error.message?.includes('timeout')) {
+        errorMessage = `Превышено время ожидания ответа (Timeout) от ${baseUrl}. Сервер слишком долго отвечает или недоступен из-за проблем с сетью.`;
+      } else if (errorData.error?.message) {
+        errorMessage = errorData.error.message;
+      } else if (errorData.message) {
+        errorMessage = errorData.message;
+      } else if (status === 404) {
+        errorMessage = 'API эндпоинт не найден (404). Проверьте корректность Base URL и то, что ваша версия BookStack поддерживает API.';
+      } else if (status === 401) {
+        errorMessage = 'Ошибка авторизации (401). Пожалуйста, проверьте правильность Token ID и Token Secret в настройках.';
+      }
       
       res.status(status).json({ 
         error: errorMessage,
