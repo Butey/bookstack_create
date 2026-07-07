@@ -260,7 +260,15 @@ export class ApiController {
       let errorData = error.response?.data || { message: error.message, code: error.code };
 
       if (typeof errorData === 'string' && errorData.toLowerCase().includes('<html')) {
-        errorData = { message: 'Received HTML error page from server. Please check if your Base URL is correct.' };
+        if (status === 503) {
+          errorData = { message: 'Сервис недоступен (503 Service Unavailable). Сервер BookStack перегружен или недоступен.' };
+        } else if (status === 502) {
+          errorData = { message: 'Ошибочный шлюз (502 Bad Gateway). Проблема с прокси-сервером или nginx перед BookStack.' };
+        } else if (status === 504) {
+          errorData = { message: 'Тайм-аут шлюза (504 Gateway Timeout). Сервер BookStack слишком долго отвечает.' };
+        } else {
+          errorData = { message: 'Получена HTML-страница с ошибкой от сервера. Пожалуйста, проверьте правильность Base URL.' };
+        }
       }
 
       console.error(`[BookStack Error] ${method} ${url} - Status: ${status} - Message:`, errorData.message || errorData.error?.message || 'Unknown error');
@@ -278,6 +286,12 @@ export class ApiController {
         errorMessage = errorData.error.message;
       } else if (errorData.message) {
         errorMessage = errorData.message;
+      } else if (status === 502) {
+        errorMessage = 'Ошибка 502 (Bad Gateway). Nginx или прокси перед BookStack не может получить ответ от самого BookStack.';
+      } else if (status === 503) {
+        errorMessage = 'Ошибка 503 (Service Unavailable). Сервер BookStack перегружен, выключен или находится на обслуживании.';
+      } else if (status === 504) {
+        errorMessage = 'Ошибка 504 (Gateway Timeout). Прокси-сервер не дождался ответа от BookStack.';
       } else if (status === 404) {
         errorMessage = 'API эндпоинт не найден (404). Проверьте корректность Base URL и то, что ваша версия BookStack поддерживает API.';
       } else if (status === 401) {

@@ -51,27 +51,6 @@ export default defineConfig(({mode}) => {
       rollupOptions: {
         maxParallelFileOps: 1, // Строго один файл за раз, чтобы минимизировать нагрузку на CPU/RAM на 1 vCPU серверах
         cache: false, // Отключаем кэш Rollup, чтобы предотвратить раздувание Node.js Heap-памяти во время сборки
-        output: {
-          manualChunks(id) {
-            // Дробим сторонние зависимости на меньшие куски. 
-            // Это предотвращает удержание в RAM одного огромного AST-дерева в Rollup.
-            if (id.includes('node_modules')) {
-              if (id.includes('mermaid')) {
-                return 'vendor-mermaid';
-              }
-              if (id.includes('d3') || id.includes('recharts')) {
-                return 'vendor-charts';
-              }
-              if (id.includes('motion')) {
-                return 'vendor-motion';
-              }
-              if (id.includes('react')) {
-                return 'vendor-react';
-              }
-              return 'vendor-core';
-            }
-          }
-        }
       }
     },
     server: {
