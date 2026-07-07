@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { ClipboardList } from 'lucide-react';
 import { WorkspacePanel } from './WorkspacePanel';
 import { ConfigurationModal } from './ConfigurationModal';
@@ -63,12 +63,27 @@ interface SourceEditorPanelProps {
 
 export function SourceEditorPanel(props: SourceEditorPanelProps) {
   const [ticketId, setTicketId] = useState('');
+  const [hasAutoLoadedTicket, setHasAutoLoadedTicket] = useState(false);
 
-  const handleLoadTicket = (e?: React.FormEvent) => {
-    if (e) {
-      e.preventDefault();
+  useEffect(() => {
+    // Check URL for ticket parameter (e.g. ?ticket=123456)
+    const urlParams = new URLSearchParams(window.location.search);
+    const urlTicket = urlParams.get('ticket');
+    
+    if (urlTicket && !hasAutoLoadedTicket && props.omnideskCreds.domain && props.omnideskCreds.email && props.omnideskCreds.apiKey) {
+      setTicketId(urlTicket);
+      setHasAutoLoadedTicket(true);
+      
+      // Auto trigger the load
+      const syntheticEvent = { preventDefault: () => {} } as React.FormEvent;
+      // Note: we can't directly call handleLoadTicket with the state because setTicketId is async.
+      // So we extract the logic or just use urlTicket directly.
+      loadTicketById(urlTicket);
     }
-    const cleanId = ticketId.trim();
+  }, [props.omnideskCreds, hasAutoLoadedTicket]);
+
+  const loadTicketById = (idToLoad: string) => {
+    const cleanId = idToLoad.trim();
     if (!cleanId) return;
 
     if (!props.omnideskCreds.domain || !props.omnideskCreds.email || !props.omnideskCreds.apiKey) {
@@ -128,6 +143,14 @@ export function SourceEditorPanel(props: SourceEditorPanelProps) {
         }, 5000);
       });
   };
+
+  const handleLoadTicket = (e?: React.FormEvent) => {
+    if (e) {
+      e.preventDefault();
+    }
+    loadTicketById(ticketId);
+  };
+
 
   return (
     <div className="lg:col-span-8 flex flex-col gap-8">
