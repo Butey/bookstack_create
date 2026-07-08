@@ -84,6 +84,8 @@ export class BookStackService {
       return { status: response.status, data: response.data };
     } catch (error: any) {
       const status = error.response?.status;
+      const isTunnel = baseUrl.includes('mytunnel.org') || baseUrl.includes('localtunnel.me') || baseUrl.includes('ngrok') || baseUrl.includes('trycloudflare.com');
+      
       // Повторяем запрос при 502, 503, 504 или ECONNRESET
       const shouldRetry = (status === 502 || status === 503 || status === 504 || error.code === 'ECONNRESET') && retries > 0;
       
@@ -91,6 +93,17 @@ export class BookStackService {
         console.warn(`[BookStackService] Ошибка ${status || error.code} при обращении к ${url}. Повтор через ${backoff} мс (Осталось попыток: ${retries})`);
         await new Promise(res => setTimeout(res, backoff));
         return this.proxyRequest(baseUrl, tokenId, tokenSecret, method, url, data, retries - 1, backoff * 2);
+      }
+
+      // Если это туннель и произошла ошибка 503 или сетевая ошибка, добавляем подсказку
+      if (isTunnel && (status === 503 || error.code === 'ECONNRESET' || error.code === 'ECONNREFUSED')) {
+        if (!error.response) {
+          error.response = { status: status || 503, data: {} };
+        }
+        if (typeof error.response.data !== 'object') {
+          error.response.data = {};
+        }
+        error.response.data.message = `Ошибка туннеля ${status || error.code}. Вероятно, локальный агент туннеля (mytunnel/localtunnel) отключен, запущен на неверном порту или ваш локальный сервер BookStack выключен.`;
       }
 
       throw error;
