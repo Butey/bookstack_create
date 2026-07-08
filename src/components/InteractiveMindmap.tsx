@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import type * as D3Type from 'd3';
+import { loadD3 } from '../utils/cdnLoader';
 
 export interface MindMapNode {
   name: string;
@@ -53,8 +54,8 @@ export const InteractiveMindmap = React.memo(function InteractiveMindmap({ data 
     let isMounted = true;
 
     const renderMindmap = async () => {
-      // Dynamic import of D3 to heavily save CPU and memory during Vite build
-      const d3 = await import('d3');
+      // Dynamically load D3 from CDN to heavily save CPU and memory during Vite build
+      const d3 = await loadD3();
       if (!isMounted || !svgRef.current || !wrapperRef.current) return;
 
       const width = wrapperRef.current.clientWidth;
@@ -75,7 +76,7 @@ export const InteractiveMindmap = React.memo(function InteractiveMindmap({ data 
         id?: string | number;
       };
 
-      const root = d3.hierarchy<MindMapNode>(data) as ExtendedHierarchyNode;
+      const root = (d3.hierarchy as any)(data) as ExtendedHierarchyNode;
       root.x0 = dy / 2;
       root.y0 = 0;
 
@@ -90,7 +91,7 @@ export const InteractiveMindmap = React.memo(function InteractiveMindmap({ data 
 
       const g = svg.append("g");
 
-      const zoom = d3.zoom<SVGSVGElement, unknown>()
+      const zoom = (d3.zoom as any)()
         .scaleExtent([0.1, 4])
         .on("zoom", (event) => {
           g.attr("transform", event.transform);
@@ -98,10 +99,10 @@ export const InteractiveMindmap = React.memo(function InteractiveMindmap({ data 
 
       svg.call(zoom as any);
 
-      const tree = d3.tree<MindMapNode>().nodeSize([dx, dy]);
-      const diagonal = d3.linkHorizontal<D3Type.HierarchyPointLink<MindMapNode>, D3Type.HierarchyPointNode<MindMapNode>>()
-          .x(d => d.y)
-          .y(d => d.x);
+      const tree = (d3.tree as any)().nodeSize([dx, dy]);
+      const diagonal = (d3.linkHorizontal as any)()
+          .x((d: any) => d.y)
+          .y((d: any) => d.x);
 
       let i = 0;
 
@@ -119,8 +120,8 @@ export const InteractiveMindmap = React.memo(function InteractiveMindmap({ data 
           if (node.x > right.x!) right = node;
         });
 
-        const node = g.selectAll<SVGGElement, ExtendedHierarchyNode>("g.node")
-          .data(nodes, d => d.id as any);
+        const node = g.selectAll("g.node")
+          .data(nodes, (d: any) => d.id as any);
 
         const nodeEnter = node.enter().append("g")
             .attr("class", "node cursor-pointer")
@@ -170,8 +171,8 @@ export const InteractiveMindmap = React.memo(function InteractiveMindmap({ data 
             .attr("stroke-opacity", 0)
             .remove();
 
-        const link = g.selectAll<SVGPathElement, D3Type.HierarchyPointLink<MindMapNode>>("path.link")
-          .data(links, d => d.target.id as any);
+        const link = g.selectAll("path.link")
+          .data(links, (d: any) => d.target.id as any);
 
         const linkEnter = link.enter().insert("path", "g")
             .attr("class", "link")

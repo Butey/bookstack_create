@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { loadMermaid } from '../utils/cdnLoader';
 
 interface MermaidRendererProps {
   code: string;
@@ -20,8 +21,8 @@ export function MermaidRenderer({ code }: MermaidRendererProps) {
         setError(null);
         const cleanCode = code.trim();
         
-        // Dynamically load mermaid to prevent heavy static import analysis during Vite build
-        const { default: mermaid } = await import('mermaid');
+        // Dynamically load mermaid from CDN to prevent heavy static import analysis during Vite build
+        const mermaid = await loadMermaid();
         
         mermaid.initialize({
           startOnLoad: false,
