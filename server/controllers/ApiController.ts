@@ -395,6 +395,149 @@ export class ApiController {
     }
   };
 
+  public verifyAdminPassword = async (req: Request, res: Response): Promise<any> => {
+    const { password } = req.body;
+    const adminPassword = process.env.ADMIN_PASSWORD || 'admin';
+
+    if (password === adminPassword) {
+      return res.json({ success: true });
+    }
+
+    if (!process.env.ADMIN_PASSWORD) {
+      return res.status(401).json({ error: 'Неверный пароль администратора. Так как переменная ADMIN_PASSWORD не задана в системе, используйте дефолтный пароль "admin".' });
+    }
+    return res.status(401).json({ error: 'Неверный пароль администратора' });
+  };
+
+  public importSkills = async (req: Request, res: Response): Promise<any> => {
+    const { password, url, rawText } = req.body;
+    const adminPassword = process.env.ADMIN_PASSWORD || 'admin';
+
+    // Verify admin password
+    if (password !== adminPassword) {
+      if (!process.env.ADMIN_PASSWORD) {
+        return res.status(401).json({ error: 'Неверный пароль администратора. Так как переменная ADMIN_PASSWORD не задана в системе, используйте дефолтный пароль "admin" для импорта навыков.' });
+      }
+      return res.status(401).json({ error: 'Неверный пароль администратора' });
+    }
+
+    let content = '';
+    if (url) {
+      try {
+        let targetUrl = url.trim();
+        // Convert standard GitHub file URL to raw
+        if (targetUrl.includes('github.com') && !targetUrl.includes('raw.githubusercontent.com') && !targetUrl.includes('/raw/')) {
+          targetUrl = targetUrl
+            .replace('github.com', 'raw.githubusercontent.com')
+            .replace('/blob/', '/');
+        }
+
+        const response = await fetch(targetUrl, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+          }
+        });
+
+        if (!response.ok) {
+          return res.status(400).json({ error: `Не удалось загрузить URL: статус ${response.status} ${response.statusText}` });
+        }
+        content = await response.text();
+
+        // Basic strip of script and style blocks if HTML
+        if (content.trim().startsWith('<') || targetUrl.toLowerCase().endsWith('.html') || targetUrl.toLowerCase().includes('/html')) {
+          content = content
+            .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+            .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
+            .replace(/<[^>]+>/g, ' ');
+        }
+      } catch (err: any) {
+        return res.status(400).json({ error: `Ошибка сетевого запроса при загрузке URL: ${err.message}` });
+      }
+    } else if (rawText) {
+      content = rawText.trim();
+    } else {
+      return res.status(400).json({ error: 'Укажите URL или предоставьте исходный текст' });
+    }
+
+    if (!content || content.length < 10) {
+      return res.status(400).json({ error: 'Загруженный контент пустой или слишком короткий для анализа.' });
+    }
+
+    try {
+      const settings = this.settingsService.getSettings();
+      const apiKey = settings.geminiApiKey || process.env.GEMINI_API_KEY || '';
+      if (!apiKey) {
+        return res.status(400).json({ error: 'Ключ API Gemini не настроен на сервере. Пожалуйста, укажите его в настройках.' });
+      }
+
+      const prompt = `Вы — эксперт по ИИ-агентам и системным инструкциям (system prompts).
+Ваша задача — проанализировать переданный контент (это может быть репозиторий GitHub, спецификация API NVIDIA NIM, описание ИИ-модели, документация или технический текст) и извлечь, синтезировать или создать на его основе один или несколько высококачественных пользовательских навыков (Agent Skills) для нашего ИИ-агента.
+
+Каждый навык должен представлять собой полезное умение ИИ-агента, снабженное четкой, структурированной системной инструкцией на РУССКОМ языке.
+
+Пожалуйста, верните результат в формате JSON-массива объектов со следующей схемой:
+[
+  {
+    "id": "строка, уникальный идентификатор в формате 'custom-skill-XXXXXX', где XXXXXX - случайные цифры или буквы",
+    "name": "строка, понятное название навыка на русском языке (например, 'NVIDIA Llama Аналитик' или 'GitHub Релиз Трекер')",
+    "badge": "строка, категория или источник (например, 'GitHub', 'NVIDIA NIM', 'API', 'Аналитика')",
+    "description": "строка, детальное описание/системная инструкция для Агента на русском языке. Это должна быть четкая инструкция, объясняющая Агенту, КАК именно он должен себя вести и выполнять данный навык. Используйте профессиональный, директивный тон (например: 'При активации этого навыка вы должны... Всегда форматируйте... Оценивайте...')",
+    "iconName": "строка, одна из предложенных иконок: Brain, Cpu, Database, Terminal, Activity, Layers, Sparkles, Wand2, FileSpreadsheet"
+  }
+]
+
+Пожалуйста, отвечайте СТРОГО в формате JSON-массива. Не пишите никаких дополнительных пояснений, введений или Markdown-разметки (никаких \`\`\`json). Начните ответ сразу с символа '['.
+
+Контент для анализа:
+---
+${content.substring(0, 15000)}
+---`;
+
+      const response = await this.geminiService.generateContent(apiKey, 'gemini-3.5-flash', [{ text: prompt }]);
+      const text = response.text || '';
+
+      let skills: any[] = [];
+      try {
+        const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+        const cleanJson = jsonMatch ? jsonMatch[1] : text;
+        skills = JSON.parse(cleanJson.trim());
+      } catch (e) {
+        const firstBracket = text.indexOf('[');
+        const lastBracket = text.lastIndexOf(']');
+        if (firstBracket !== -1 && lastBracket !== -1 && lastBracket > firstBracket) {
+          skills = JSON.parse(text.substring(firstBracket, lastBracket + 1));
+        } else {
+          throw new Error('Не удалось спарсить JSON-ответ от Gemini. Ответ ИИ: ' + text);
+        }
+      }
+
+      if (!Array.isArray(skills)) {
+        if (typeof skills === 'object' && skills !== null) {
+          skills = [skills];
+        } else {
+          return res.status(422).json({ error: 'ИИ вернул некорректный формат данных (ожидался массив навыков).' });
+        }
+      }
+
+      const validSkills = skills.map((s, idx) => {
+        return {
+          id: s.id || `custom-skill-import-${Date.now()}-${idx}`,
+          name: s.name || 'Импортированный навык',
+          description: s.description || s.prompt || 'Описание отсутствует',
+          badge: s.badge || 'Импорт',
+          iconName: ['Brain', 'Cpu', 'Database', 'Terminal', 'Activity', 'Layers', 'Sparkles', 'Wand2', 'FileSpreadsheet'].includes(s.iconName) 
+            ? s.iconName 
+            : 'Brain'
+        };
+      });
+
+      return res.json({ success: true, skills: validSkills });
+    } catch (e: any) {
+      console.error('[ApiController] Failed to import skills:', e.message || e);
+      return res.status(500).json({ error: `Ошибка синтеза навыков через ИИ: ${e.message}` });
+    }
+  };
+
   private extractPdfMetadata(buffer: Buffer): any {
     const text = buffer.toString('binary');
     const metadata: any = {

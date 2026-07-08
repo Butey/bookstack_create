@@ -27,6 +27,7 @@ import { useExecutionControl } from './hooks/useExecutionControl';
 import { useFileUpload } from './hooks/useFileUpload';
 import { useAgentActions } from './hooks/useAgentActions';
 import { useBookStackSync } from './hooks/useBookStackSync';
+import { AgentSkillItem } from './utils/skillLoader';
 
 export default function App() {
   const executionControl = useExecutionControl();
@@ -70,6 +71,7 @@ export default function App() {
     'analyzing-logs': true,
   });
   const [customPresets, setCustomPresets] = useState<any[]>([]);
+  const [customSkills, setCustomSkills] = useState<AgentSkillItem[]>([]);
   const [selectedPreset, setSelectedPreset] = useState<string>('general-kbae');
 
   const [defaultActiveSkills, setDefaultActiveSkills] = useState<Record<string, boolean>>(() => {
@@ -138,6 +140,7 @@ export default function App() {
       if (settingsData.agent_active_skills) setActiveSkills(settingsData.agent_active_skills);
       if (settingsData.agent_default_active_skills) setDefaultActiveSkills(settingsData.agent_default_active_skills);
       if (settingsData.agent_custom_presets) setCustomPresets(settingsData.agent_custom_presets);
+      if (settingsData.agent_custom_skills) setCustomSkills(settingsData.agent_custom_skills);
       if (settingsData.agent_selected_preset) setSelectedPreset(settingsData.agent_selected_preset);
       if (settingsData.agent_gemini_model) {
         const validIds = GEMINI_MODELS.map(m => m.id) as string[];
@@ -466,7 +469,8 @@ root_cause_category: "[Category]"
     loadChaptersAndPages,
     setSelectedBookId,
     setSelectedPageId,
-    activeSkills
+    activeSkills,
+    customSkills
   });
 
   const handleSyncWithHistory = useCallback(async (pregeneratedContent?: string) => {
@@ -506,13 +510,14 @@ root_cause_category: "[Category]"
           agent_default_active_skills: defaultActiveSkills,
           agent_gemini_model: geminiModel,
           agent_custom_presets: customPresets,
+          agent_custom_skills: customSkills,
           agent_selected_preset: selectedPreset
         })
       }).catch(console.error);
     }, 1000);
 
     return () => clearTimeout(timer);
-  }, [sources, workMode, dataStructure, systemInstruction, searchPrompt, duplicatePrompt, contextPrompt, activeSkills, defaultActiveSkills, geminiModel, customPresets, selectedPreset, isSettingsLoaded, sessionId]);
+  }, [sources, workMode, dataStructure, systemInstruction, searchPrompt, duplicatePrompt, contextPrompt, activeSkills, defaultActiveSkills, geminiModel, customPresets, customSkills, selectedPreset, isSettingsLoaded, sessionId]);
 
   const forceSaveSettings = () => {
     fetch('/api/settings', {
@@ -533,6 +538,7 @@ root_cause_category: "[Category]"
         agent_default_active_skills: defaultActiveSkills,
         agent_gemini_model: geminiModel,
         agent_custom_presets: customPresets,
+        agent_custom_skills: customSkills,
         agent_selected_preset: selectedPreset
       })
     })
@@ -629,6 +635,8 @@ root_cause_category: "[Category]"
             setCustomPresets={setCustomPresets}
             selectedPreset={selectedPreset}
             setSelectedPreset={setSelectedPreset}
+            customSkills={customSkills}
+            setCustomSkills={setCustomSkills}
           />
 
            <KnowledgeSyncPanel

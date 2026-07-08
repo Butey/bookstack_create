@@ -18,6 +18,8 @@ apiRouter.route('/settings')
   .post(apiController.updateSettings);
 
 apiRouter.post('/settings/secure-update', apiController.updateSecureSettings);
+apiRouter.post('/admin/verify-password', apiController.verifyAdminPassword);
+apiRouter.post('/admin/import-skills', apiController.importSkills);
 
 apiRouter.post('/process-source', upload.single('file'), apiController.processSource);
 apiRouter.post('/gemini/generate', apiController.generateGemini);

@@ -59,6 +59,8 @@ interface SourceEditorPanelProps {
   setCustomPresets: React.Dispatch<React.SetStateAction<any[]>>;
   selectedPreset: string;
   setSelectedPreset: React.Dispatch<React.SetStateAction<string>>;
+  customSkills?: any[];
+  setCustomSkills?: React.Dispatch<React.SetStateAction<any[]>>;
 }
 
 export function SourceEditorPanel(props: SourceEditorPanelProps) {
@@ -236,6 +238,8 @@ export function SourceEditorPanel(props: SourceEditorPanelProps) {
           setCustomPresets={props.setCustomPresets}
           selectedPreset={props.selectedPreset}
           setSelectedPreset={props.setSelectedPreset}
+          customSkills={props.customSkills}
+          setCustomSkills={props.setCustomSkills}
         />
 
         <div className="space-y-2">

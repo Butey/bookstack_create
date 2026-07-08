@@ -1,6 +1,7 @@
 import { MutableRefObject } from 'react';
 import { BookStackCredentials, ProcessedArticle, BookStackBook, BookStackChapter, BookStackPage, Source } from '../types';
 import { GeminiModelId, generateArticleFromSources, generateMindmap, generateFAQ, generateMermaid } from '../services/gemini';
+import { loadAgenticSkills } from '../utils/skillLoader';
 import { agenticRagWorkflow } from '../services/agent';
 import { createBook, fetchBooks, createChapter, createPage, updatePage, indexVectorDocument, fetchPage } from '../services/api';
 
@@ -48,7 +49,8 @@ export function useAgentActions(params: {
   loadChaptersAndPages: any,
   setSelectedBookId: any,
   setSelectedPageId: any,
-  activeSkills?: Record<string, boolean>
+  activeSkills?: Record<string, boolean>,
+  customSkills?: any[]
 }) {
 
   const executePublishing = async (processed: ProcessedArticle) => {
@@ -280,6 +282,26 @@ export function useAgentActions(params: {
     await executionControl.checkPauseAndAbort();
     executionControl.setSyncProgress({ step: 2, total: 4, label: 'AI Анализ и синтез статьи' });
     
+    const finalSystemInstruction = (() => {
+      let baseInstruction = params.systemInstruction || '';
+      if (params.activeSkills) {
+        const allSkills = [...loadAgenticSkills(), ...(params.customSkills || [])];
+        const activeSkillDetails: string[] = [];
+        for (const [skillId, isActive] of Object.entries(params.activeSkills)) {
+          if (isActive) {
+            const sk = allSkills.find(s => s.id === skillId);
+            if (sk) {
+              activeSkillDetails.push(`- **${sk.name}**: ${sk.description}`);
+            }
+          }
+        }
+        if (activeSkillDetails.length > 0) {
+          baseInstruction += `\n\nАКТИВИРОВАННЫЕ НАВЫКИ АГЕНТА:\n${activeSkillDetails.join('\n')}`;
+        }
+      }
+      return baseInstruction;
+    })();
+
     const processed = await generateArticleFromSources(
       allSourcesText, 
       params.instructions || 'Составьте краткий обзор и организуйте данные в профессиональное руководство.',
@@ -292,7 +314,7 @@ export function useAgentActions(params: {
         signal: params.executionControl.abortControllerRef.current?.signal, 
         checkPause: params.executionControl.checkPauseAndAbort,
         onProgress: (msg) => params.executionControl.setSyncStatus({ type: 'idle', message: msg }),
-        systemInstruction: params.systemInstruction,
+        systemInstruction: finalSystemInstruction,
         dataStructure: params.dataStructure,
         activeSkills: params.activeSkills
       },
@@ -513,6 +535,26 @@ export function useAgentActions(params: {
       const allSourcesText = selectedSources.map(s => `ИСТОЧНИК: ${s.name}\n${s.content}`).join('\n\n') + (content ? `\n\nТЕКСТ:\n${content}` : '');
       const allAttachments = selectedSources.flatMap(s => s.attachments || []);
       
+      const finalSystemInstruction = (() => {
+        let baseInstruction = params.systemInstruction || '';
+        if (params.activeSkills) {
+          const allSkills = [...loadAgenticSkills(), ...(params.customSkills || [])];
+          const activeSkillDetails: string[] = [];
+          for (const [skillId, isActive] of Object.entries(params.activeSkills)) {
+            if (isActive) {
+              const sk = allSkills.find(s => s.id === skillId);
+              if (sk) {
+                activeSkillDetails.push(`- **${sk.name}**: ${sk.description}`);
+              }
+            }
+          }
+          if (activeSkillDetails.length > 0) {
+            baseInstruction += `\n\nАКТИВИРОВАННЫЕ НАВЫКИ АГЕНТА:\n${activeSkillDetails.join('\n')}`;
+          }
+        }
+        return baseInstruction;
+      })();
+
       const refined = await generateArticleFromSources(
         allSourcesText, 
         instructions || 'Составьте краткий обзор и организуйте данные в профессиональное руководство.',
@@ -525,7 +567,7 @@ export function useAgentActions(params: {
           signal: executionControl.abortControllerRef.current?.signal, 
           checkPause: executionControl.checkPauseAndAbort,
           onProgress: (msg) => executionControl.setSyncStatus({ type: 'idle', message: msg }),
-          systemInstruction: params.systemInstruction,
+          systemInstruction: finalSystemInstruction,
           dataStructure: params.dataStructure
         },
         allAttachments
