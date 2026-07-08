@@ -1,5 +1,20 @@
 import { ForwardRefExoticComponent, RefAttributes } from 'react';
-import * as LucideIcons from 'lucide-react';
+import { Sparkles, Cpu, Layers, Activity, Eye, Database, Terminal, Heart, ClipboardList, Brain, FileSpreadsheet, CheckCircle } from 'lucide-react';
+
+const iconMap: Record<string, any> = {
+  Sparkles,
+  Cpu,
+  Layers,
+  Activity,
+  Eye,
+  Database,
+  Terminal,
+  Heart,
+  ClipboardList,
+  Brain,
+  FileSpreadsheet,
+  CheckCircle,
+};
 
 export interface AgentSkillItem {
   id: string;
@@ -97,6 +112,6 @@ export function loadAgenticSkills(): AgentSkillItem[] {
 }
 
 export function getIconComponent(iconName: string) {
-  const Icon = (LucideIcons as any)[iconName] || LucideIcons.Sparkles;
+  const Icon = iconMap[iconName] || Sparkles;
   return Icon;
 }
