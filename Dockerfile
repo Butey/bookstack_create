@@ -32,9 +32,12 @@ ENV NODE_ENV=production
 ENV PORT=3000
 
 # Копируем только необходимые файлы для запуска, минимизируя размер итогового образа
-COPY package.json package-lock.json* ./
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/dist ./dist
+COPY --chown=node:node package.json package-lock.json* ./
+COPY --chown=node:node --from=builder /app/node_modules ./node_modules
+COPY --chown=node:node --from=builder /app/dist ./dist
+
+# Явно меняем владельца рабочей директории на пользователя node для возможности записи/создания файлов (settings.json)
+RUN chown -R node:node /app
 
 # Используем безопасного не-root пользователя node
 USER node
