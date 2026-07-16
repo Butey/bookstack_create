@@ -39,13 +39,15 @@ export function useBookStackSync(
     }
   }, [credentials, setSyncStatus]);
 
-  const loadChaptersAndPages = useCallback(async (bookId: number) => {
+  const loadChaptersAndPages = useCallback(async (bookId: number, silent = false) => {
     setSelectedBookId(bookId);
     setSelectedChapterId(null);
     setSelectedPageId(null);
     setIsLoadingChapters(true);
     setIsLoadingPages(true);
-    setSyncStatus({ type: 'idle', message: 'Загрузка структуры книги...' });
+    if (!silent) {
+      setSyncStatus({ type: 'idle', message: 'Загрузка структуры книги...' });
+    }
     
     try {
       const updatedData = await fetchChaptersAndPages(credentials, bookId, (updatedData) => {
@@ -54,29 +56,39 @@ export function useBookStackSync(
       });
       setChapters(updatedData.chapters);
       setPages(updatedData.pages);
-      setSyncStatus({ type: 'idle', message: '' });
+      if (!silent) {
+        setSyncStatus({ type: 'idle', message: '' });
+      }
     } catch (e: any) {
-      setSyncStatus({ type: 'error', message: 'Не удалось загрузить главы и страницы для этой книги.' });
+      if (!silent) {
+        setSyncStatus({ type: 'error', message: 'Не удалось загрузить главы и страницы для этой книги.' });
+      }
     } finally {
       setIsLoadingChapters(false);
       setIsLoadingPages(false);
     }
   }, [credentials, setSyncStatus]);
 
-  const loadChapterPages = useCallback(async (chapterId: number) => {
+  const loadChapterPages = useCallback(async (chapterId: number, silent = false) => {
     setSelectedChapterId(chapterId);
     setSelectedPageId(null);
     setIsLoadingPages(true);
-    setSyncStatus({ type: 'idle', message: 'Загрузка страниц главы...' });
+    if (!silent) {
+      setSyncStatus({ type: 'idle', message: 'Загрузка страниц главы...' });
+    }
     
     try {
       const data = await fetchChapterPages(credentials, chapterId, (updatedData) => {
         setPages(updatedData);
       });
       setPages(data);
-      setSyncStatus({ type: 'idle', message: '' });
+      if (!silent) {
+        setSyncStatus({ type: 'idle', message: '' });
+      }
     } catch (e: any) {
-      setSyncStatus({ type: 'error', message: 'Не удалось загрузить страницы для этой главы.' });
+      if (!silent) {
+        setSyncStatus({ type: 'error', message: 'Не удалось загрузить страницы для этой главы.' });
+      }
     } finally {
       setIsLoadingPages(false);
     }

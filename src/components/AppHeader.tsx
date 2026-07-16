@@ -12,6 +12,7 @@ interface AppHeaderProps {
   setIsConfigOpen: (v: boolean) => void;
   isSyncing?: boolean;
   syncProgress?: { step: number; total: number; label: string };
+  workMode: 'auto' | 'review';
 }
 
 export function AppHeader({
@@ -20,7 +21,8 @@ export function AppHeader({
   isConsoleOpen, setIsConsoleOpen,
   isConfigOpen, setIsConfigOpen,
   isSyncing,
-  syncProgress
+  syncProgress,
+  workMode
 }: AppHeaderProps) {
   const percent = (syncProgress && syncProgress.total > 0) 
     ? Math.round((syncProgress.step / syncProgress.total) * 100) 
@@ -67,6 +69,10 @@ export function AppHeader({
           <div className="hidden lg:flex items-center gap-2 text-[10px] uppercase tracking-widest font-bold">
             <span className={`w-2 h-2 rounded-full ${credentials.baseUrl ? 'bg-green-500' : 'bg-red-500'}`}></span>
             {credentials.baseUrl ? 'Соединение' : 'Ожидание'}
+          </div>
+          <div className="hidden md:flex items-center gap-2 px-3 py-1.5 bg-editorial-accent/10 border-2 border-editorial-text text-[10px] uppercase tracking-wider font-bold shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]">
+            <span className={`w-2 h-2 rounded-full ${workMode === 'auto' ? 'bg-amber-500 animate-pulse' : 'bg-blue-500'}`}></span>
+            <span>Режим: {workMode === 'auto' ? 'Автономный' : 'Ручной'}</span>
           </div>
           <button 
             onClick={() => setIsConsoleOpen(!isConsoleOpen)}

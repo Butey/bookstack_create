@@ -334,21 +334,33 @@ ${currentPrompt}
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4 border-t border-gray-100">
               <div className="md:col-span-2">
-                <label className="text-[10px] font-bold uppercase tracking-widest text-[#8E8E8A] mb-3 block">Режим работы</label>
+                <label className="text-[10px] font-bold uppercase tracking-widest text-[#8E8E8A] mb-3 block">Режим работы Агента (workMode / review)</label>
                 <div className="grid grid-cols-2 gap-4">
                   <button
+                    type="button"
                     onClick={() => setWorkMode('auto')}
-                    className={`p-3 border-2 flex items-center justify-center gap-2 transition-all ${workMode === 'auto' ? 'border-editorial-text bg-editorial-accent/10 shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]' : 'border-gray-200 text-gray-400 opacity-60'}`}
+                    className={`p-4 border-2 flex flex-col items-start gap-2 text-left transition-all cursor-pointer ${workMode === 'auto' ? 'border-editorial-text bg-editorial-accent/10 shadow-[4px_4px_0px_0px_rgba(26,26,26,1)]' : 'border-gray-200 text-gray-400 hover:border-gray-300'}`}
                   >
-                    <Terminal size={14} />
-                    <span className="text-[10px] font-bold uppercase">Автономный</span>
+                    <div className="flex items-center gap-2">
+                      <Terminal size={16} className={workMode === 'auto' ? 'text-editorial-text' : 'text-gray-400'} />
+                      <span className="text-[10px] font-bold uppercase tracking-wider">Автоматический режим (workMode)</span>
+                    </div>
+                    <p className="text-[9px] leading-relaxed opacity-80">
+                      Статьи публикуются напрямую в BookStack без ручной проверки. Идеально для быстрой и автономной синхронизации базы знаний.
+                    </p>
                   </button>
                   <button
+                    type="button"
                     onClick={() => setWorkMode('review')}
-                    className={`p-3 border-2 flex items-center justify-center gap-2 transition-all ${workMode === 'review' ? 'border-editorial-text bg-editorial-accent/10 shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]' : 'border-gray-200 text-gray-400 opacity-60'}`}
+                    className={`p-4 border-2 flex flex-col items-start gap-2 text-left transition-all cursor-pointer ${workMode === 'review' ? 'border-editorial-text bg-editorial-accent/10 shadow-[4px_4px_0px_0px_rgba(26,26,26,1)]' : 'border-gray-200 text-gray-400 hover:border-gray-300'}`}
                   >
-                    <ClipboardList size={14} />
-                    <span className="text-[10px] font-bold uppercase">С подтверждением</span>
+                    <div className="flex items-center gap-2">
+                      <ClipboardList size={16} className={workMode === 'review' ? 'text-editorial-text' : 'text-gray-400'} />
+                      <span className="text-[10px] font-bold uppercase tracking-wider">Режим ручной проверки (review)</span>
+                    </div>
+                    <p className="text-[9px] leading-relaxed opacity-80">
+                      Статьи генерируются в консоль для предварительного ревью. Вы можете править текст, улучшать промпты и публиковать только после одобрения.
+                    </p>
                   </button>
                 </div>
               </div>

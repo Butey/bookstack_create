@@ -42,7 +42,7 @@ export default function App() {
 
   const [isSettingsLoaded, setIsSettingsLoaded] = useState(false);
   const [sources, setSources] = useState<Source[]>([]);
-  const [workMode, setWorkMode] = useState<'auto' | 'review'>('auto');
+  const [workMode, setWorkMode] = useState<'auto' | 'review'>('review');
   const [pendingApproval, setPendingApproval] = useState<boolean>(false);
   const [chatHistory, setChatHistory] = useState<{ role: 'user' | 'model', content: string }[]>([]);
   const [userInput, setUserInput] = useState('');
@@ -583,6 +583,7 @@ root_cause_category: "[Category]"
         setIsConfigOpen={setIsConfigOpen}
         isSyncing={executionControl.isSyncing}
         syncProgress={executionControl.syncProgress}
+        workMode={workMode}
       />
 
       <main className="max-w-6xl mx-auto px-10 py-12">

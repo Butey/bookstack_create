@@ -202,8 +202,8 @@ export function useAgentActions(params: {
       setContent('');
       setSources([]);
       
-      if (selectedChapterId) loadChapterPages(selectedChapterId);
-      else if (selectedBookId) loadChaptersAndPages(selectedBookId);
+      if (selectedChapterId) loadChapterPages(selectedChapterId, true);
+      else if (selectedBookId) loadChaptersAndPages(selectedBookId, true);
       
     } catch (e: any) {
       console.error(e);
@@ -364,6 +364,7 @@ export function useAgentActions(params: {
       const processed = {
         title: 'Новая Статья (из Чата)',
         content: pregeneratedContent,
+        markdown: pregeneratedContent,
         thinking: 'Быстрый экспорт из чата. Пожалуйста, укажите необходимую книгу и параметры.',
         targetPublishMode: targetMode,
         targetPublishPageId: selectedPageId,
@@ -376,7 +377,7 @@ export function useAgentActions(params: {
       if (workMode === 'review') {
          setPendingApproval(true);
          setIsConsoleOpen(true);
-         executionControl.setSyncStatus({ type: 'success', message: 'Контент перенесён в консоль и готов к проверке.' });
+         executionControl.setSyncStatus({ type: 'idle', message: 'Контент перенесён в консоль и готов к проверке.' });
       } else {
          await executePublishing(processed as ProcessedArticle);
       }
@@ -521,7 +522,7 @@ export function useAgentActions(params: {
   const handleRefinement = async (userInput: string) => {
     const { 
       chatHistory, setChatHistory, sources, content, targetMode, books, chapters, geminiModel,
-      selectedPageId, selectedBookId, instructions, setLastResponse, executionControl
+      selectedPageId, selectedBookId, instructions, setLastResponse, executionControl, setPendingApproval
     } = params;
 
     if (!userInput.trim()) return;
@@ -582,8 +583,9 @@ export function useAgentActions(params: {
       refined.targetPublishBookId = selectedBookId;
       
       setLastResponse(refined);
+      setPendingApproval(true);
       setChatHistory((prev: any) => [...prev, { role: 'model', content: refined.thinking }]);
-      executionControl.setSyncStatus({ type: 'success', message: 'Статья обновлена с учетом ваших правок.' });
+      executionControl.setSyncStatus({ type: 'idle', message: 'Статья обновлена с учетом ваших правок. Ожидание подтверждения...' });
     } catch (e: any) {
       executionControl.setSyncStatus({ type: 'error', message: 'Не удалось уточнить статью: ' + e.message });
     } finally {

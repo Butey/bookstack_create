@@ -27,6 +27,35 @@ function extractJson(text: string): any {
   }
 }
 
+function stripTechnicalMetadata(markdown: string): string {
+  if (!markdown) return markdown;
+  let clean = markdown.trim();
+
+  // 1. Strip YAML frontmatter block if it starts with --- and contains technical keys
+  clean = clean.replace(/^---\r?\n([\s\S]*?)\r?\n---\r?\n/i, (match, content) => {
+    if (
+      content.toLowerCase().includes('target_book') || 
+      content.toLowerCase().includes('target_chapter') || 
+      content.toLowerCase().includes('priority') || 
+      content.toLowerCase().includes('root_cause_category')
+    ) {
+      return ''; // remove the block completely
+    }
+    return match; // keep it if it's some other block
+  });
+
+  // 2. Strip individual key-value lines for our technical metadata
+  const lines = clean.split('\n');
+  const filteredLines = lines.filter(line => {
+    const trimmed = line.trim();
+    const isTechnicalKey = /^(target_book|target_chapter|tags|priority|root_cause_category)\s*:/i.test(trimmed);
+    return !isTechnicalKey;
+  });
+
+  clean = filteredLines.join('\n').trim();
+  return clean;
+}
+
 function generateTableOfContents(markdown: string): string {
   if (!markdown) return markdown;
   
@@ -482,7 +511,8 @@ export class GeminiService {
     currentActiveModel = reviewResult.modelUsed;
     const review = extractJson(reviewResult.text);
 
-    const finalMarkdown = generateTableOfContents(review.markdown || draft.markdown);
+    const cleanMarkdown = stripTechnicalMetadata(review.markdown || draft.markdown);
+    const finalMarkdown = generateTableOfContents(cleanMarkdown);
 
     return {
       thinking: "План: " + (plan.thinking || "") + "\n\nДрафт: " + (draft.thinking || "") + "\n\nРевью: " + (review.thinking || ""),
